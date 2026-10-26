@@ -22,7 +22,6 @@ FILES=(
   "hooks/guard-generated-files.sh:$CLAUDE_DIR/hooks/guard-generated-files.sh"
   "hooks/guard-secret-files.sh:$CLAUDE_DIR/hooks/guard-secret-files.sh"
   "hooks/check-bare-references.sh:$CLAUDE_DIR/hooks/check-bare-references.sh"
-  "hooks/check-question-ending.sh:$CLAUDE_DIR/hooks/check-question-ending.sh"
 )
 
 # Other directories uninstall.sh removes. Not for state: uninstall.sh already
@@ -63,8 +62,7 @@ settings_merge() {
       ])
     | .hooks.Stop = ((.hooks.Stop // []) + [
         { hooks: [entry("check-write-handoff.sh")] },
-        { hooks: [entry("check-bare-references.sh")] },
-        { hooks: [entry("check-question-ending.sh")] }
+        { hooks: [entry("check-bare-references.sh")] }
       ])
   '
 }
@@ -79,7 +77,6 @@ REGISTRATIONS=(
   "PreToolUse (matcher: Edit|Write|MultiEdit|NotebookEdit|Bash) -> guard-generated-files.sh"
   "PreToolUse (matcher: Read|Bash) -> guard-secret-files.sh"
   "Stop (no matcher) -> check-bare-references.sh"
-  "Stop (no matcher) -> check-question-ending.sh"
 )
 
 # Feed each hook a call it must refuse and confirm it does. The PreToolUse two
@@ -107,8 +104,5 @@ verify_probe() {
   printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
   printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"F6 is still open."}' \
     | bash "$CLAUDE_DIR/hooks/check-bare-references.sh" >/dev/null 2>&1
-  [ $? = 2 ] || return 1
-  printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"The tests pass.\n\nShall I run the build?"}' \
-    | bash "$CLAUDE_DIR/hooks/check-question-ending.sh" >/dev/null 2>&1
   [ $? = 2 ]
 }

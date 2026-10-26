@@ -21,7 +21,7 @@ no(){ printf '  FAIL  %s\n    %s\n' "$1" "$2"; fail=$((fail+1)); }
 # registered commands, but these commands are paths to the hook scripts and
 # never contain it, so that check passes whatever uninstall leaves behind. This
 # one looks for the scripts.
-jq -e '[.. | .command? // empty] | any(test("check-discuss-batch\\.sh|gate-unsandboxed-bash\\.sh|redirect-blocked-write\\.sh|check-write-handoff\\.sh|guard-generated-files\\.sh|guard-secret-files\\.sh|check-bare-references\\.sh|check-question-ending\\.sh"))' \
+jq -e '[.. | .command? // empty] | any(test("check-discuss-batch\\.sh|gate-unsandboxed-bash\\.sh|redirect-blocked-write\\.sh|check-write-handoff\\.sh|guard-generated-files\\.sh|guard-secret-files\\.sh|check-bare-references\\.sh"))' \
   "$CLAUDE_DIR/settings.json" >/dev/null 2>&1 \
   && no "uninstall removes the hook scripts' entries" "still registered" \
   || ok "uninstall removes the hook scripts' entries"
@@ -245,42 +245,6 @@ done
 call check-bare-references.sh "$(st "F6 is open." true)"
 [ "$rc" = 0 ] && ok "stop_hook_active lets the turn end" || no "stop_hook_active lets the turn end" "rc=$rc"
 
-echo "check-question-ending"
-for m in "The tests pass.
-
-Shall I run the build on the simulator?" \
-         "The fix is in.
-
-Do you want me to add the test as well?" \
-         "Here are the three options.
-
-Is that what you want?" \
-         "Nothing has run yet. OK to go ahead?" \
-         "Shall I run the build?
-
-⎸ F3. Something held back."; do
-  call check-question-ending.sh "$(st "$m")"
-  blocked && ok "nudges: $(printf '%s' "$m" | tail -1)" || no "nudges: $(printf '%s' "$m" | tail -1)" "rc=$rc"
-done
-grep -q "When in" "$TMP/err" && ok "the message keeps the question when in doubt" || no "the message keeps the question when in doubt" "$(cat "$TMP/err")"
-for m in "Committed locally.
-
-Shall I push main and the tag?" \
-         "Draft below.
-
-Shall I post this comment to HBS-53 in Jira?" \
-         "Shall I delete the three stale worktrees?" \
-         "The build passes. Nothing else is left." \
-         "Which store did you mean, 5111 or 1927?" \
-         "Done.
-
-⎸ F3. Shall I also do the other thing?"; do
-  call check-question-ending.sh "$(st "$m")"
-  [ "$rc" = 0 ] && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-50)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-50)" "rc=$rc"
-done
-call check-question-ending.sh "$(st "Shall I run it?" true)"
-[ "$rc" = 0 ] && ok "stop_hook_active lets the question through" || no "stop_hook_active lets the question through" "rc=$rc"
-
 echo "installer — beside claude-branch-guard"
 cat > "$CLAUDE_DIR/settings.json" <<'JSON'
 {"model":"Opus","hooks":{"PreToolUse":[{"matcher":"Skill","hooks":[
@@ -293,7 +257,7 @@ count(){ jq "[.hooks[$1][]?.hooks[]] | length" "$CLAUDE_DIR/settings.json"; }
   || no "adds its four PreToolUse hooks without dropping the existing one" "got $(count '"PreToolUse"')"
 [ "$(count '"UserPromptExpansion"')" = 1 ] && ok "registers the typed-command hook" \
   || no "registers the typed-command hook" "got $(count '"UserPromptExpansion"')"
-[ "$(count '"Stop"')" = 3 ] && ok "registers the three Stop hooks" || no "registers the three Stop hooks" "got $(count '"Stop"')"
+[ "$(count '"Stop"')" = 2 ] && ok "registers the two Stop hooks" || no "registers the two Stop hooks" "got $(count '"Stop"')"
 for ev in PostToolUse PostToolUseFailure; do
   [ "$(count "\"$ev\"")" = 1 ] && ok "registers the $ev hook" || no "registers the $ev hook" "got $(count "\"$ev\"")"
 done

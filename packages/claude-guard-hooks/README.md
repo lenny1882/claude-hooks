@@ -3,7 +3,7 @@
 Small hooks that stop Claude Code going wrong in a way you would otherwise
 have to correct by hand: doing something quietly that should involve a
 person, handing you work it can do itself, editing generated files, printing
-credentials, and replies you have to send back. They are packaged together
+credentials, and references you have to ask about. They are packaged together
 because each one holds Claude to a rule it already has and does not follow
 unprompted — usually one written down as a memory in a single project, which
 never reached the others.
@@ -164,21 +164,6 @@ keys are not checked.
 Answer codes only count in a sentence about answers or options, or with a
 second code beside them, so "a 3d model" is left alone.
 
-## check-question-ending.sh
-
-`Stop`. When the reply's last paragraph asks permission for a next step
-("Shall I…?", "Do you want me to…?", "OK to go ahead?"), sends it back once to
-decide: do the step if it is inside what was asked, local and reversible; keep
-the question, with its reason, if it is outside the request, a real choice, or
-something you would have to undo; drop it if you are still asking about
-details.
-
-It is a nudge on purpose. The opposite failure — changes made because a hook
-said "stop asking", which then have to be reverted — is worse, so the message
-ends "when in doubt, keep the question". A question that names a push, post,
-deploy, delete, reset, merge, release, PR, Jira or Slack is never sent back,
-and `stop_hook_active` lets every second pass through.
-
 ## Install
 
 Needs `curl`, `tar` and `jq`. From the newest release:
@@ -204,7 +189,7 @@ Re-running the installer is safe and is how you upgrade. It merges into
 touches its own entries. If Claude Code is already running, `/hooks` forces a
 settings reload.
 
-It touches only its own ten entries — other hooks, including
+It touches only its own nine entries — other hooks, including
 `claude-branch-guard`'s, are left alone, and there is a test for exactly that. A
 newly registered hook needs a Claude Code restart; `/hooks` only reloads changes
 to existing ones.
