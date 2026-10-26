@@ -36,6 +36,7 @@ GEN_HEAD='GENERATED CODE|DO NOT EDIT|DO NOT MODIFY|@generated|auto-generated|Cod
 
 deny() { # deny <path>
   "$JQ" -n --arg p "$1" '{
+    systemMessage: ("Hand edit of " + $p + " refused: generated file"),
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",

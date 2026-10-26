@@ -73,7 +73,7 @@ MSG
     has_flag "$args" && exit 0
 
     jq -n --arg skill "$skill" --arg args "$args" \
-      '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: ("\($skill) was called without --batch (args: \"\($args)\"), so it would ask one question per turn. Do not re-run it yet. Use AskUserQuestion to ask the user how they want the questions asked, with these options: (1) --batch — 2-5 related questions per turn, recommended; (2) --batch=3 — fixed groups of 3; (3) --no-batch — one question at a time, the stock flow. Then re-run \($skill) with the same arguments plus exactly the flag they chose, including --no-batch for option 3, which this hook treats as a deliberate opt-out and lets through.")}}'
+      '{systemMessage: ("\($skill) called without --batch; Claude will ask you how to batch"), hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: ("\($skill) was called without --batch (args: \"\($args)\"), so it would ask one question per turn. Do not re-run it yet. Use AskUserQuestion to ask the user how they want the questions asked, with these options: (1) --batch — 2-5 related questions per turn, recommended; (2) --batch=3 — fixed groups of 3; (3) --no-batch — one question at a time, the stock flow. Then re-run \($skill) with the same arguments plus exactly the flag they chose, including --no-batch for option 3, which this hook treats as a deliberate opt-out and lets through.")}}'
     exit 0
     ;;
 esac

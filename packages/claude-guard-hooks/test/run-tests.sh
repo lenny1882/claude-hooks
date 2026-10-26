@@ -35,6 +35,8 @@ denied(){ [ -s "$TMP/out" ] \
   && jq -e '.hookSpecificOutput.permissionDecision == "deny"' "$TMP/out" >/dev/null 2>&1; }
 # A UserPromptExpansion block is exit 2 with the reason on stderr.
 blocked(){ [ "$rc" = 2 ] && [ -s "$TMP/err" ]; }
+# Sent back to Claude through additionalContext, with a line for the user.
+fed(){ [ "$rc" = 0 ] && [ -s "$TMP/out" ] && jq -e ".hookSpecificOutput.additionalContext and .systemMessage" "$TMP/out" >/dev/null 2>&1; }
 
 echo "gate-unsandboxed-bash"
 j(){ jq -nc --argjson s "$1" '{hook_event_name:"PreToolUse",tool_name:"Bash",
@@ -97,14 +99,14 @@ for e in "cp: cannot create regular file '/home/u/claude-sandbox/M.md': Read-onl
          "fatal: Unable to create '/r/.git/index.lock': Read-only file system"; do
   call redirect-blocked-write.sh "$(pf "Exit code 1
 $e")"
-  blocked && ok "failure: ${e:0:50}" || no "failure: ${e:0:50}" "rc=$rc"
+  fed && ok "failure: ${e:0:50}" || no "failure: ${e:0:50}" "rc=$rc"
 done
 call redirect-blocked-write.sh "$(pt "== a
 tee: /tmp/x.log: Read-only file system
 syntax ok")"
-blocked && ok "a blocked write mid-pipeline that exited 0 is caught" || no "a blocked write mid-pipeline that exited 0 is caught" "rc=$rc"
-grep -q "Write or Edit" "$TMP/err" && ok "the message names Write and Edit" || no "the message names Write and Edit" "$(cat "$TMP/err")"
-grep -q "Read-only file system" "$TMP/err" && ok "the message quotes the error line" || no "the message quotes the error line" "$(cat "$TMP/err")"
+fed && ok "a blocked write mid-pipeline that exited 0 is caught" || no "a blocked write mid-pipeline that exited 0 is caught" "rc=$rc"
+grep -q "Write or Edit" "$TMP/out" && ok "the message names Write and Edit" || no "the message names Write and Edit" "$(cat "$TMP/out")"
+grep -q "Read-only file system" "$TMP/out" && ok "the message quotes the error line" || no "the message quotes the error line" "$(cat "$TMP/out")"
 for e in '**"Read-only file system" names one path, not a disk.**' \
          "gave \"Read-only file system\" on touch" \
          "git@github.com: Permission denied (publickey)." \
@@ -139,9 +141,9 @@ for m in "The updated MIGRATION.md is ready, but I couldn't save it over the ori
          "! cd /r && cp /tmp/a.md docs/a.md" \
          "! install -m 644 /tmp/a.conf ~/.config/a.conf"; do
   call check-write-handoff.sh "$(st "$m")"
-  blocked && ok "blocks: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "blocks: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc"
+  fed && ok "blocks: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "blocks: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc"
 done
-grep -q "Write or Edit" "$TMP/err" && ok "the message names Write and Edit" || no "the message names Write and Edit" "$(cat "$TMP/err")"
+grep -q "Write or Edit" "$TMP/out" && ok "the message names Write and Edit" || no "the message names Write and Edit" "$(cat "$TMP/out")"
 for m in "\`MIGRATION.md\` is updated. Bash's \`cp\` got \"Read-only file system\", but the Write tool wrote the file directly." \
          "Bash's sandbox blocks writes to ~/.ssh, so push from your prompt:
 ! git push --atomic origin main release/x-v1.x x-v1.2.0" \
@@ -156,7 +158,7 @@ for m in "\`MIGRATION.md\` is updated. Bash's \`cp\` got \"Read-only file system
          "! bash scripts/cp-assets.sh && make" \
          "The hook blocks replies that say \"can't write\" next to a \`! cp\`."; do
   call check-write-handoff.sh "$(st "$m")"
-  [ "$rc" = 0 ] && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc $(cat "$TMP/err")"
+  [ "$rc" = 0 ] && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc $(cat "$TMP/out")"
 done
 call check-write-handoff.sh "$(st "I can't write to it." true)"
 [ "$rc" = 0 ] && ok "stop_hook_active lets the turn end" || no "stop_hook_active lets the turn end" "rc=$rc"
@@ -172,7 +174,7 @@ call check-write-handoff.sh "$(jq -nc --arg t "$TMP/t.jsonl" '{hook_event_name:"
 [ "$rc" = 0 ] && ok "transcript fallback reads only the current reply" || no "transcript fallback reads only the current reply" "rc=$rc"
 jq -nc '{type:"assistant",message:{content:[{type:"text",text:"I couldn'"'"'t write the file."}]}}' >> "$TMP/t.jsonl"
 call check-write-handoff.sh "$(jq -nc --arg t "$TMP/t.jsonl" '{hook_event_name:"Stop",stop_hook_active:false,transcript_path:$t}')"
-blocked && ok "transcript fallback catches the claim" || no "transcript fallback catches the claim" "rc=$rc"
+fed && ok "transcript fallback catches the claim" || no "transcript fallback catches the claim" "rc=$rc"
 
 echo "guard-generated-files"
 ed(){ jq -nc --arg t "$1" --arg p "$2" --arg c "${3:-}" '{hook_event_name:"PreToolUse",tool_name:$t,
@@ -238,9 +240,9 @@ for m in "F6 is still open, and 1b needs your answer." \
          "Done. F12 can go next." \
          "F6 is still open."; do
   call check-bare-references.sh "$(st "$m")"
-  blocked && ok "blocks: $m" || no "blocks: $m" "rc=$rc"
+  fed && ok "blocks: $m" || no "blocks: $m" "rc=$rc"
 done
-grep -q "plain words" "$TMP/err" && ok "the message says what to do" || no "the message says what to do" "$(cat "$TMP/err")"
+grep -q "plain words" "$TMP/out" && ok "the message says what to do" || no "the message says what to do" "$(cat "$TMP/out")"
 for m in "F12 (adding the nine memory files to their indexes) is done." \
          "**F17.** Generated-files hook: built and tested." \
          "D-18 is the rule that a deleted location sends the user to user select; it still holds." \
@@ -253,7 +255,7 @@ for m in "F12 (adding the nine memory files to their indexes) is done." \
          "Run \`git log F6..main\` to see them." \
          "Commit 4b71a03b and session 1cf3ff3c, both on a 3d model."; do
   call check-bare-references.sh "$(st "$m")"
-  [ "$rc" = 0 ] && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-50)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-50)" "rc=$rc $(cat "$TMP/err")"
+  [ "$rc" = 0 ] && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-50)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-50)" "rc=$rc $(cat "$TMP/out")"
 done
 call check-bare-references.sh "$(st "F6 is open." true)"
 [ "$rc" = 0 ] && ok "stop_hook_active lets the turn end" || no "stop_hook_active lets the turn end" "rc=$rc"

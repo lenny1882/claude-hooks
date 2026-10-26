@@ -40,6 +40,7 @@ is_secret() { # is_secret <path>
 
 deny() { # deny <path>
   "$JQ" -n --arg p "$1" '{
+    systemMessage: ("Printing " + $p + " refused: credential file"),
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",

@@ -58,7 +58,7 @@ handoff=$(printf '%s' "$msg" | grep -m1 -o -E \
 
 [ -n "$claim$handoff" ] || exit 0
 
-{
+guidance=$({
   echo "This reply hands the user a write that the Write or Edit tool can do:"
   echo
   [ -n "$claim" ]   && echo "  $claim"
@@ -76,5 +76,11 @@ directory, git commit, a build), keep it as one `!` line, introduced as "Bash's
 sandbox blocks writes to <path>", and say nothing about the path being
 unwritable. See ~/.claude/reference/this-machine.md.
 EOF
-} >&2
-exit 2
+})
+
+# The guidance goes to Claude as additionalContext; the user sees one line.
+"$JQ" -n --arg g "$guidance" '{
+  systemMessage: "Reply handed you a write Claude can do itself; sent back to do it",
+  hookSpecificOutput: { hookEventName: "Stop", additionalContext: $g }
+}'
+exit 0

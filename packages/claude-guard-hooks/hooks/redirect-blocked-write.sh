@@ -15,7 +15,11 @@
 # Why both events. A command that exits non-zero arrives as PostToolUseFailure;
 # one where the failed write sits mid-pipeline or before a `;` exits 0 and
 # arrives as PostToolUse. Half of that day's blocked writes were the second
-# kind. Exit 2 puts stderr in front of the model on both.
+# kind. Both accept additionalContext.
+#
+# Who sees what. The guidance goes in additionalContext, which reaches Claude
+# and is not shown as a chat message; the user gets one line in systemMessage.
+# Exit 2 printed the whole guidance to the user as a hook error.
 #
 # Why the patterns are shaped like errors rather than bare phrases. Claude
 # reads this-machine.md, which quotes "Read-only file system" in prose; a bare
@@ -45,7 +49,9 @@ hit=$(printf '%s' "$text" | grep -m1 -E \
   | cut -c1-200)
 [ -n "$hit" ] || exit 0
 
-cat >&2 <<EOF
+event=$(printf '%s' "$input" | "$JQ" -r '.hook_event_name // "PostToolUse"')
+
+guidance=$(cat <<EOF
 Bash's sandbox blocked a write:
 
   $hit
@@ -66,4 +72,10 @@ read-only. Do not tell the user it cannot be written, and do not hand them a
 
 See ~/.claude/reference/this-machine.md.
 EOF
-exit 2
+)
+
+"$JQ" -n --arg e "$event" --arg g "$guidance" --arg h "$hit" '{
+  systemMessage: ("Sandbox blocked a Bash write: " + $h),
+  hookSpecificOutput: { hookEventName: $e, additionalContext: $g }
+}'
+exit 0

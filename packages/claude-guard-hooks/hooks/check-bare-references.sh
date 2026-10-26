@@ -67,7 +67,7 @@ bare=$(printf '%s' "$msg" | perl -0777 -ne '
 ')
 [ -n "$bare" ] || exit 0
 
-cat >&2 <<EOF
+guidance=$(cat <<EOF
 This reply uses references without saying what they are: $bare
 
 The user cannot hold every id from earlier in the session in their head, and
@@ -76,4 +76,11 @@ one is used, say what it is in plain words — "F12 (adding the nine memory
 files to their indexes)", "D-18, the rule that a deleted location sends the
 user back to user select". Then end the turn.
 EOF
-exit 2
+)
+
+# The guidance goes to Claude as additionalContext; the user sees one line.
+"$JQ" -n --arg g "$guidance" --arg b "$bare" '{
+  systemMessage: ("Reply used unexplained ids: " + $b + "; sent back"),
+  hookSpecificOutput: { hookEventName: "Stop", additionalContext: $g }
+}'
+exit 0

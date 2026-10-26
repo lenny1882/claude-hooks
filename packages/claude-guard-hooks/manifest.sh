@@ -91,11 +91,11 @@ verify_probe() {
     | bash "$CLAUDE_DIR/hooks/check-discuss-batch.sh" 2>/dev/null) || return 1
   printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
   printf '%s' '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","error":"cp: cannot create regular file '"'"'/x'"'"': Read-only file system"}' \
-    | bash "$CLAUDE_DIR/hooks/redirect-blocked-write.sh" >/dev/null 2>&1
-  [ $? = 2 ] || return 1
+    | bash "$CLAUDE_DIR/hooks/redirect-blocked-write.sh" 2>/dev/null \
+    | jq -se '.[0].hookSpecificOutput.additionalContext' >/dev/null 2>&1 || return 1
   printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"~/x is read-only from this session."}' \
-    | bash "$CLAUDE_DIR/hooks/check-write-handoff.sh" >/dev/null 2>&1
-  [ $? = 2 ] || return 1
+    | bash "$CLAUDE_DIR/hooks/check-write-handoff.sh" 2>/dev/null \
+    | jq -se '.[0].hookSpecificOutput.additionalContext' >/dev/null 2>&1 || return 1
   out=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/r/lib/router/routes.gr.dart"}}' \
     | bash "$CLAUDE_DIR/hooks/guard-generated-files.sh" 2>/dev/null) || return 1
   printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
@@ -103,6 +103,6 @@ verify_probe() {
     | bash "$CLAUDE_DIR/hooks/guard-secret-files.sh" 2>/dev/null) || return 1
   printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
   printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"F6 is still open."}' \
-    | bash "$CLAUDE_DIR/hooks/check-bare-references.sh" >/dev/null 2>&1
-  [ $? = 2 ]
+    | bash "$CLAUDE_DIR/hooks/check-bare-references.sh" 2>/dev/null \
+    | jq -se '.[0].hookSpecificOutput.additionalContext' >/dev/null 2>&1
 }
