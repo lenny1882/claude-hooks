@@ -7,8 +7,9 @@
 # compared against the inventory by name; anything unlisted blocks the turn with
 # an instruction to write it down.
 #
-# Exit 2 on a Stop hook feeds stderr back to the model and stops the turn
-# ending. Two guards against nagging: stop_hook_active is honoured, as the
+# The instruction goes to the model as Stop additionalContext, which keeps the
+# turn going without printing it to the user as a hook error; the user gets one
+# line in systemMessage. Two guards against nagging: stop_hook_active is honoured, as the
 # harness requires, and each session is told at most once.
 #
 #   INVENTORY file   $CLAUDE_INVENTORY, default ~/claude-sandbox/INVENTORY.md
@@ -54,12 +55,19 @@ done
 [ ${#missing[@]} -eq 0 ] && exit 0
 
 : > "$seen"
-{
+guidance=$({
   echo "These are installed but not written down in $INVENTORY:"
   printf '  - %s\n' "${missing[@]}"
   echo
   echo "Add a row for each: what it is, where its source directory is (or that it"
   echo "has none yet), and whether it still needs packaging. Keep the existing"
   echo "format. Then carry on with whatever you were doing."
-} >&2
-exit 2
+})
+names=$(printf '%s, ' "${missing[@]}"); names=${names%, }
+
+# The guidance goes to Claude as additionalContext; the user sees one line.
+"$JQ" -n --arg g "$guidance" --arg n "$names" --arg f "$(basename "$INVENTORY")" '{
+  systemMessage: ("Not in " + $f + ": " + $n + "; Claude is adding them"),
+  hookSpecificOutput: { hookEventName: "Stop", additionalContext: $g }
+}'
+exit 0

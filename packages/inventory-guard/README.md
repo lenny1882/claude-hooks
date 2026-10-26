@@ -102,8 +102,8 @@ hooks intact.
 
 The hook only reads `INVENTORY.md`. It never writes to it, has no way to create
 one, and nothing in the package regenerates it. When it finds something missing
-it prints the names to stderr and exits 2, and the rows are then written by
-Claude in response to that message. That is the only path by which the file ever
+it hands the names to Claude as `additionalContext`, shows you one line naming
+them, and the rows are then written by Claude in response to that message. That is the only path by which the file ever
 changes.
 
 Keeping the contents hand-written is deliberate. The rows carry judgement — what
@@ -123,7 +123,7 @@ outside the package:
 2. **The format** — the status meanings (shipped, packaged, loose) and the table
    shape. These exist only as prose inside the `INVENTORY.md` on this machine,
    which the package does not ship.
-3. **The rules the hook cannot enforce.** Its stderr message carries the
+3. **The rules the hook cannot enforce.** Its message to Claude carries the
    instruction to add a row and keep the format, so that much travels with the
    package. But a row is also wanted when a new source directory is created, and
    when something's packaging status changes. The hook only ever sees installed

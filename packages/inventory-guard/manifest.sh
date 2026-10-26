@@ -52,9 +52,9 @@ verify_probe() {
   : > "$t/INVENTORY.md"
   printf '%s' '{"hook_event_name":"Stop","session_id":"probe","stop_hook_active":false}' \
     | HOME="$t" CLAUDE_INVENTORY="$t/INVENTORY.md" bash "$CLAUDE_DIR/hooks/inventory-check.sh" \
-      >/dev/null 2>"$t/err"
+      >"$t/out" 2>/dev/null
   rc=$?
-  grep -q "probe-unlisted.sh" "$t/err"; local named=$?
+  jq -se '.[0].hookSpecificOutput.additionalContext // "" | test("probe-unlisted.sh")' "$t/out" >/dev/null 2>&1; local named=$?
   rm -rf "$t"
-  [ "$rc" = 2 ] && [ "$named" = 0 ]
+  [ "$rc" = 0 ] && [ "$named" = 0 ]
 }

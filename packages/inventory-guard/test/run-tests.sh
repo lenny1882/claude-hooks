@@ -33,7 +33,10 @@ export CLAUDE_INVENTORY="$TMP/INVENTORY.md"
 run(){ # run <session id> [stop_hook_active]
   jq -nc --arg s "$1" --argjson a "${2:-false}" \
     '{hook_event_name:"Stop",session_id:$s,stop_hook_active:$a}' \
-  | bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; echo $?
+  | bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rc=$?
+  # A turn sent back to Claude shows as additionalContext on exit 0.
+  [ "$rc" = 0 ] && [ -s "$TMP/out" ] && jq -e .hookSpecificOutput.additionalContext "$TMP/out" >/dev/null 2>&1 && rc=fed
+  echo $rc
 }
 
 echo "nothing installed"
@@ -42,10 +45,10 @@ echo "nothing installed"
 
 echo "an unlisted hook"
 touch "$HOME/.claude/hooks/something-new.sh"
-[ "$(run s2)" = 2 ] && ok "blocks on an unlisted hook" || no "blocks on an unlisted hook" "did not block"
-grep -q "something-new.sh" "$TMP/err" && ok "names what is missing" || no "names what is missing" "$(cat "$TMP/err")"
+[ "$(run s2)" = fed ] && ok "blocks on an unlisted hook" || no "blocks on an unlisted hook" "did not block"
+grep -q "something-new.sh" "$TMP/out" && ok "names what is missing" || no "names what is missing" "$(cat "$TMP/out")"
 [ "$(run s2)" = 0 ] && ok "says it once per session" || no "says it once per session" "nagged twice"
-[ "$(run s3)" = 2 ] && ok "a new session is told too" || no "a new session is told too" "stayed quiet"
+[ "$(run s3)" = fed ] && ok "a new session is told too" || no "a new session is told too" "stayed quiet"
 
 echo "once written down"
 echo "- something-new.sh — a thing" > "$CLAUDE_INVENTORY"
@@ -53,19 +56,19 @@ echo "- something-new.sh — a thing" > "$CLAUDE_INVENTORY"
 
 echo "other kinds"
 mkdir -p "$HOME/.claude/skills/some-skill"
-[ "$(run s5)" = 2 ] && ok "notices skills" || no "notices skills" "missed a skill"
+[ "$(run s5)" = fed ] && ok "notices skills" || no "notices skills" "missed a skill"
 echo "- some-skill" >> "$CLAUDE_INVENTORY"
 touch "$HOME/.local/bin/claude-thing"
-[ "$(run s6)" = 2 ] && ok "notices ~/.local/bin/claude-*" || no "notices ~/.local/bin/claude-*" "missed a command"
+[ "$(run s6)" = fed ] && ok "notices ~/.local/bin/claude-*" || no "notices ~/.local/bin/claude-*" "missed a command"
 echo "- claude-thing" >> "$CLAUDE_INVENTORY"
-[ "$(run s7)" = 0 ] && ok "quiet once all are listed" || no "quiet once all are listed" "$(cat "$TMP/err")"
+[ "$(run s7)" = 0 ] && ok "quiet once all are listed" || no "quiet once all are listed" "$(cat "$TMP/out")"
 
 echo "guards"
 touch "$HOME/.claude/hooks/another-new.sh"
 [ "$(run s8 true)" = 0 ] && ok "honours stop_hook_active" || no "honours stop_hook_active" "blocked in a loop"
 touch "$HOME/.claude/hooks/x.sh.bak-20260101"
-[ "$(run s9)" = 2 ] && ok "still blocks on the real one" || no "still blocks on the real one" "did not block"
-grep -q "\.bak" "$TMP/err" && no "ignores .bak files" "complained about a backup" || ok "ignores .bak files"
+[ "$(run s9)" = fed ] && ok "still blocks on the real one" || no "still blocks on the real one" "did not block"
+grep -q "\.bak" "$TMP/out" && no "ignores .bak files" "complained about a backup" || ok "ignores .bak files"
 touch "$HOME/.claude/.no-inventory-check"
 [ "$(run s10)" = 0 ] && ok "opt-out silences it" || no "opt-out silences it" "still blocked"
 rm -f "$HOME/.claude/.no-inventory-check"
