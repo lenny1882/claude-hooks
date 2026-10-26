@@ -17,6 +17,8 @@ OWNS="claude-guard-hooks"
 FILES=(
   "hooks/check-discuss-batch.sh:$CLAUDE_DIR/hooks/check-discuss-batch.sh"
   "hooks/gate-unsandboxed-bash.sh:$CLAUDE_DIR/hooks/gate-unsandboxed-bash.sh"
+  "hooks/redirect-blocked-write.sh:$CLAUDE_DIR/hooks/redirect-blocked-write.sh"
+  "hooks/check-write-handoff.sh:$CLAUDE_DIR/hooks/check-write-handoff.sh"
 )
 
 # Other directories uninstall.sh removes. Not for state: uninstall.sh already
@@ -29,6 +31,10 @@ STATE_DIRS=()
 # becomes a Skill call. UserPromptExpansion has no matcher on purpose — the
 # name a plugin skill registers under is not worth betting on, and a matcher
 # that misses fails silently. The script filters instead. See README.md.
+#
+# redirect-blocked-write.sh is registered on PostToolUse and PostToolUseFailure
+# because a blocked write mid-pipeline exits 0 and only the first sees it, while
+# a command that exits non-zero only reaches the second.
 #
 # Commands keep the "bash ~/.claude/hooks/<script>" form the pre-kit installer
 # wrote, so reinstalling over that install replaces its entries in place.
@@ -43,6 +49,15 @@ settings_merge() {
     | .hooks.UserPromptExpansion = ((.hooks.UserPromptExpansion // []) + [
         { hooks: [entry("check-discuss-batch.sh")] }
       ])
+    | .hooks.PostToolUse = ((.hooks.PostToolUse // []) + [
+        { matcher: "Bash", hooks: [entry("redirect-blocked-write.sh")] }
+      ])
+    | .hooks.PostToolUseFailure = ((.hooks.PostToolUseFailure // []) + [
+        { matcher: "Bash", hooks: [entry("redirect-blocked-write.sh")] }
+      ])
+    | .hooks.Stop = ((.hooks.Stop // []) + [
+        { hooks: [entry("check-write-handoff.sh")] }
+      ])
   '
 }
 
@@ -50,10 +65,14 @@ REGISTRATIONS=(
   "PreToolUse (matcher: Skill) -> check-discuss-batch.sh"
   "PreToolUse (matcher: Bash) -> gate-unsandboxed-bash.sh"
   "UserPromptExpansion (no matcher) -> check-discuss-batch.sh"
+  "PostToolUse (matcher: Bash) -> redirect-blocked-write.sh"
+  "PostToolUseFailure (matcher: Bash) -> redirect-blocked-write.sh"
+  "Stop (no matcher) -> check-write-handoff.sh"
 )
 
-# Feed each hook a call it must refuse and confirm it does. Both deny rather
-# than ask; a hook that stopped denying would install cleanly and do nothing.
+# Feed each hook a call it must refuse and confirm it does. The PreToolUse two
+# deny rather than ask; the other two block with exit 2. A hook that stopped
+# doing either would install cleanly and do nothing.
 verify_probe() {
   local out
   out=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls","dangerouslyDisableSandbox":true}}' \
@@ -61,5 +80,11 @@ verify_probe() {
   printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
   out=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"gsd:discuss-phase","args":"3"}}' \
     | bash "$CLAUDE_DIR/hooks/check-discuss-batch.sh" 2>/dev/null) || return 1
-  printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1
+  printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
+  printf '%s' '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","error":"cp: cannot create regular file '"'"'/x'"'"': Read-only file system"}' \
+    | bash "$CLAUDE_DIR/hooks/redirect-blocked-write.sh" >/dev/null 2>&1
+  [ $? = 2 ] || return 1
+  printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"~/x is read-only from this session."}' \
+    | bash "$CLAUDE_DIR/hooks/check-write-handoff.sh" >/dev/null 2>&1
+  [ $? = 2 ]
 }

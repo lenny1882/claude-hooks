@@ -1,8 +1,10 @@
 # claude-guard-hooks
 
-Two small hooks that stop Claude Code doing something quietly that should
-involve a person. They are packaged together because they exist for the same
-reason, and that reason is easy to lose.
+Small hooks that stop Claude Code going wrong in a way you would otherwise
+have to correct by hand. The first two stop it doing something quietly that
+should involve a person; the last two stop it handing you work it can do
+itself. They are packaged together because each one holds Claude to a rule
+it already has and does not follow unprompted.
 
 Part of [claude-hooks](https://github.com/lenny1882/claude-hooks), which holds several packages
 that are each versioned, released and installed on their own.
@@ -14,7 +16,7 @@ In auto mode it does not reach the user at all: the harness resolves an `ask`
 decision through the same classifier that approves ordinary tool calls, and it
 approved a test command silently. `deny` is the only decision beyond its reach.
 
-So both hooks deny, and spend their refusal text telling Claude what to ask you.
+So both `PreToolUse` hooks deny, and spend their refusal text telling Claude what to ask you.
 That is the whole design. If either is ever "simplified" to `ask`, it stops
 working and nothing visibly breaks.
 
@@ -75,6 +77,44 @@ with no sign anything is wrong, and the script filtering costs one `jq` call per
 slash command. It also accepts a bare `discuss-phase` and falls back to the first
 word of `prompt` if `command_name` is ever absent.
 
+## redirect-blocked-write.sh
+
+`PostToolUse` and `PostToolUseFailure`, matcher `Bash`. When a Bash command's
+output shows the sandbox refusing a write — `path: Read-only file system`,
+`[Errno 30]`, `EROFS`, `could not lock config file`, `Unable to create
+'….lock'` — it exits 2, and its stderr goes to Claude: the path is writable with
+the Write and Edit tools, maestro-drive scripts go through the bridge, and
+anything that only Bash can do is handed over as one `!` line introduced as
+"Bash's sandbox blocks writes to <path>", never "can't write".
+
+The sandbox gates Bash only, and `~/.claude/reference/this-machine.md` says so.
+On 26 Oct 2026 Claude still told you four times in two hours that
+`~/claude-sandbox` or `.git/config` could not be written, and handed over a
+`! cp` each time. A rule read at session start has stopped steering anything by
+the time a write fails mid-task; this puts it next to the error.
+
+It is on both events because a write that fails inside a pipeline, or before a
+`;`, exits 0 and only reaches `PostToolUse`, while a command that exits
+non-zero only reaches `PostToolUseFailure`. The patterns need the punctuation
+an error has, so reading `this-machine.md`, which quotes the same phrase in
+prose, does not set it off. `Permission denied (publickey)` and git's
+`.gitmodules` warning are not write blocks and are ignored.
+
+## check-write-handoff.sh
+
+`Stop`, no matcher. The second layer, for when the first is ignored: it reads
+the reply and refuses to end the turn if it claims, in the first person, that
+something cannot be written ("I couldn't save it", "is read-only from this
+session", "the sandbox won't let me write"), or hands you a `!` command that
+only writes a file — `cp`, `tee`, `touch`, a `>` redirect, `git remote add`,
+`git config`. Claude is sent back to do the write with Write or Edit and
+rewrite the reply.
+
+`! git push`, `! rm` and a build are allowed; they have no Write or Edit
+equivalent. It reads `last_assistant_message`, and falls back to the
+transcript's tail on a Claude Code too old to send it. It honours
+`stop_hook_active`, so a false match costs one extra pass, not a loop.
+
 ## Install
 
 Needs `curl`, `tar` and `jq`. From the newest release:
@@ -100,7 +140,7 @@ Re-running the installer is safe and is how you upgrade. It merges into
 touches its own entries. If Claude Code is already running, `/hooks` forces a
 settings reload.
 
-It touches only its own three entries — other hooks, including
+It touches only its own six entries — other hooks, including
 `claude-branch-guard`'s, are left alone, and there is a test for exactly that. A
 newly registered hook needs a Claude Code restart; `/hooks` only reloads changes
 to existing ones.
@@ -127,7 +167,9 @@ Redirects `HOME` and `CLAUDE_DIR` into a temp directory, so your real config is
 never touched. `./test/run-tests.sh` at the repo root runs every package's.
 
 Feeds each hook the JSON Claude Code would send and checks the decision — both
-event shapes for `check-discuss-batch.sh` — then exercises the installer against
+event shapes for `check-discuss-batch.sh`, the four replies corrected on
+26 Oct 2026 for `check-write-handoff.sh`, and the prose that must not set off
+`redirect-blocked-write.sh` — then exercises the installer against
 a throwaway settings file.
 
 ## Releasing

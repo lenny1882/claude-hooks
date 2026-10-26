@@ -21,7 +21,7 @@ no(){ printf '  FAIL  %s\n    %s\n' "$1" "$2"; fail=$((fail+1)); }
 # registered commands, but these commands are paths to the hook scripts and
 # never contain it, so that check passes whatever uninstall leaves behind. This
 # one looks for the scripts.
-jq -e '[.. | .command? // empty] | any(test("check-discuss-batch\\.sh|gate-unsandboxed-bash\\.sh"))' \
+jq -e '[.. | .command? // empty] | any(test("check-discuss-batch\\.sh|gate-unsandboxed-bash\\.sh|redirect-blocked-write\\.sh|check-write-handoff\\.sh"))' \
   "$CLAUDE_DIR/settings.json" >/dev/null 2>&1 \
   && no "uninstall removes the hook scripts' entries" "still registered" \
   || ok "uninstall removes the hook scripts' entries"
@@ -82,6 +82,85 @@ call check-discuss-batch.sh "$(jq -nc '{hook_event_name:"UserPromptExpansion",
       expansion_type:"slash_command",command_args:"3",prompt:"/gsd:discuss-phase 3"}')"
 blocked && ok "falls back to the prompt when command_name is missing" || no "falls back to the prompt when command_name is missing" "rc=$rc"
 
+echo "redirect-blocked-write"
+# PostToolUse: the error sits in stdout because the command merged stderr.
+pt(){ jq -nc --arg o "$1" '{hook_event_name:"PostToolUse",tool_name:"Bash",
+      tool_input:{command:"x"},tool_response:{stdout:$o,stderr:"",interrupted:false}}'; }
+pf(){ jq -nc --arg e "$1" '{hook_event_name:"PostToolUseFailure",tool_name:"Bash",
+      tool_input:{command:"x"},error:$e}'; }
+for e in "cp: cannot create regular file '/home/u/claude-sandbox/M.md': Read-only file system" \
+         "/bin/bash: MEMORY.md: Read-only file system" \
+         "OSError: [Errno 30] Read-only file system: 'p.md'" \
+         "npm error code EROFS" \
+         "error: could not lock config file .git/config: File exists" \
+         "fatal: Unable to create '/r/.git/index.lock': Read-only file system"; do
+  call redirect-blocked-write.sh "$(pf "Exit code 1
+$e")"
+  blocked && ok "failure: ${e:0:50}" || no "failure: ${e:0:50}" "rc=$rc"
+done
+call redirect-blocked-write.sh "$(pt "== a
+tee: /tmp/x.log: Read-only file system
+syntax ok")"
+blocked && ok "a blocked write mid-pipeline that exited 0 is caught" || no "a blocked write mid-pipeline that exited 0 is caught" "rc=$rc"
+grep -q "Write or Edit" "$TMP/err" && ok "the message names Write and Edit" || no "the message names Write and Edit" "$(cat "$TMP/err")"
+grep -q "Read-only file system" "$TMP/err" && ok "the message quotes the error line" || no "the message quotes the error line" "$(cat "$TMP/err")"
+for e in '**"Read-only file system" names one path, not a disk.**' \
+         "gave \"Read-only file system\" on touch" \
+         "git@github.com: Permission denied (publickey)." \
+         "warning: unable to access '/r/.gitmodules': Permission denied" \
+         "rm: cannot remove 'x': Device or resource busy"; do
+  call redirect-blocked-write.sh "$(pt "$e")"
+  [ "$rc" = 0 ] && ok "ignored: ${e:0:50}" || no "ignored: ${e:0:50}" "rc=$rc"
+done
+call redirect-blocked-write.sh "$(jq -nc '{hook_event_name:"PostToolUse",tool_name:"Bash",tool_response:"plain string output"}')"
+[ "$rc" = 0 ] && ok "a string tool_response is tolerated" || no "a string tool_response is tolerated" "rc=$rc"
+
+echo "check-write-handoff"
+st(){ jq -nc --arg m "$1" --argjson a "${2:-false}" '{hook_event_name:"Stop",stop_hook_active:$a,last_assistant_message:$m}'; }
+# The four replies the user corrected on 26 Oct 2026, cut down.
+for m in "The updated MIGRATION.md is ready, but I couldn't save it over the original: ~/claude-sandbox is read-only from this session." \
+         "To put it in place, type:
+\`\`\`
+! cp /tmp/s/MIGRATION.md ~/claude-sandbox/MIGRATION.md
+\`\`\`" \
+         "You can add it yourself from this prompt:
+\`\`\`
+! git -C /r remote add origin https://github.com/u/r.git
+\`\`\`" \
+         "Building the app is blocked. The Bash sandbox won't let me write to it." \
+         "The sandbox can't write to ~/claude-sandbox." \
+         "Run:
+! echo '- [x](x.md)' >> ~/.claude/projects/p/memory/MEMORY.md"; do
+  call check-write-handoff.sh "$(st "$m")"
+  blocked && ok "blocks: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "blocks: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc"
+done
+grep -q "Write or Edit" "$TMP/err" && ok "the message names Write and Edit" || no "the message names Write and Edit" "$(cat "$TMP/err")"
+for m in "\`MIGRATION.md\` is updated. Bash's \`cp\` got \"Read-only file system\", but the Write tool wrote the file directly." \
+         "Bash's sandbox blocks writes to ~/.ssh, so push from your prompt:
+! git push --atomic origin main release/x-v1.x x-v1.2.0" \
+         "Bash's sandbox blocks deleting it:
+! rm ~/.claude/projects/p/memory/one-liner-commands.md" \
+         "! cd /r && ./gradlew assembleDebug 2>&1 | tail" \
+         "The hook blocks replies that say \"can't write\" next to a \`! cp\`."; do
+  call check-write-handoff.sh "$(st "$m")"
+  [ "$rc" = 0 ] && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc $(cat "$TMP/err")"
+done
+call check-write-handoff.sh "$(st "I can't write to it." true)"
+[ "$rc" = 0 ] && ok "stop_hook_active lets the turn end" || no "stop_hook_active lets the turn end" "rc=$rc"
+# No last_assistant_message: read the reply from the transcript, and only the
+# part after the user's last prompt.
+{ jq -nc '{type:"assistant",message:{content:[{type:"text",text:"Earlier: ~/x is read-only from this session."}]}}'
+  jq -nc '{type:"user",message:{content:"next"}}'
+  jq -nc '{type:"assistant",message:{content:[{type:"tool_use",name:"Write",input:{}}]}}'
+  jq -nc '{type:"user",message:{content:[{type:"tool_result",content:"ok"}]}}'
+  jq -nc '{type:"assistant",message:{content:[{type:"text",text:"Written with the Write tool."}]}}'
+} > "$TMP/t.jsonl"
+call check-write-handoff.sh "$(jq -nc --arg t "$TMP/t.jsonl" '{hook_event_name:"Stop",stop_hook_active:false,transcript_path:$t}')"
+[ "$rc" = 0 ] && ok "transcript fallback reads only the current reply" || no "transcript fallback reads only the current reply" "rc=$rc"
+jq -nc '{type:"assistant",message:{content:[{type:"text",text:"I couldn'"'"'t write the file."}]}}' >> "$TMP/t.jsonl"
+call check-write-handoff.sh "$(jq -nc --arg t "$TMP/t.jsonl" '{hook_event_name:"Stop",stop_hook_active:false,transcript_path:$t}')"
+blocked && ok "transcript fallback catches the claim" || no "transcript fallback catches the claim" "rc=$rc"
+
 echo "installer — beside claude-branch-guard"
 cat > "$CLAUDE_DIR/settings.json" <<'JSON'
 {"model":"Opus","hooks":{"PreToolUse":[{"matcher":"Skill","hooks":[
@@ -94,6 +173,9 @@ count(){ jq "[.hooks[$1][]?.hooks[]] | length" "$CLAUDE_DIR/settings.json"; }
   || no "adds both PreToolUse hooks without dropping the existing one" "got $(count '"PreToolUse"')"
 [ "$(count '"UserPromptExpansion"')" = 1 ] && ok "registers the typed-command hook" \
   || no "registers the typed-command hook" "got $(count '"UserPromptExpansion"')"
+for ev in PostToolUse PostToolUseFailure Stop; do
+  [ "$(count "\"$ev\"")" = 1 ] && ok "registers the $ev hook" || no "registers the $ev hook" "got $(count "\"$ev\"")"
+done
 jq -e '.hooks.UserPromptExpansion[0] | has("matcher") | not' "$CLAUDE_DIR/settings.json" >/dev/null \
   && ok "the typed-command hook has no matcher" || no "the typed-command hook has no matcher" "it has one"
 jq -e '[.hooks.PreToolUse[].hooks[].command] | any(contains("check-branch-naming"))' \
@@ -109,6 +191,8 @@ jq -e '[.hooks.PreToolUse[].hooks[].command] | any(contains("check-branch-naming
 [ "$(count '"PreToolUse"')" = 1 ] && ok "uninstall removes only its own" || no "uninstall removes only its own" "got $(count '"PreToolUse"')"
 jq -e '.hooks | has("UserPromptExpansion") | not' "$CLAUDE_DIR/settings.json" >/dev/null \
   && ok "uninstall drops the emptied event" || no "uninstall drops the emptied event" "the key is still there"
+jq -e '.hooks | (has("PostToolUse") or has("PostToolUseFailure") or has("Stop")) | not' "$CLAUDE_DIR/settings.json" >/dev/null \
+  && ok "uninstall drops the new events too" || no "uninstall drops the new events too" "$(jq -c .hooks "$CLAUDE_DIR/settings.json")"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
