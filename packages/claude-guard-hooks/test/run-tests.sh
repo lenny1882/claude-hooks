@@ -110,7 +110,10 @@ for e in '**"Read-only file system" names one path, not a disk.**' \
          "git@github.com: Permission denied (publickey)." \
          "warning: unable to access '/r/.gitmodules': Permission denied" \
          "rm: cannot remove 'x': Device or resource busy" \
-         "2026-08-12 | feedback_never_call_mnt_sda_read_only | the sandbox write policy blocks it and reports EROFS"; do
+         "2026-08-12 | feedback_never_call_mnt_sda_read_only | the sandbox write policy blocks it and reports EROFS" \
+         "# that fails with \"Read-only file system\" or \"could not lock config file\" says" \
+         "# punctuation an error message has: \"path: Read-only file system\", \"[Errno 30]\"." \
+         "test/run-tests.sh:91:for e in \"cp: cannot create regular file '/x': Read-only file system\" \\"; do
   call redirect-blocked-write.sh "$(pt "$e")"
   [ "$rc" = 0 ] && ok "ignored: ${e:0:50}" || no "ignored: ${e:0:50}" "rc=$rc"
 done

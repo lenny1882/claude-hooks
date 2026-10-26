@@ -21,6 +21,9 @@
 # reads this-machine.md, which quotes "Read-only file system" in prose; a bare
 # match would fire every time the reference is read. The patterns need the
 # punctuation an error message has: "path: Read-only file system", "[Errno 30]".
+# The phrase must also end the line or be followed by ": " — a quoted error in
+# prose or source code is followed by a quote, as in this comment and the tests.
+# "could not lock config file" needs the path and colon git puts after it.
 # EROFS likewise only in its error forms — npm's "code EROFS", Node's "EROFS:"
 # — since the bare word turns up in prose about the sandbox.
 # "Permission denied (publickey)" and git's ".gitmodules: Permission denied"
@@ -38,7 +41,7 @@ text=$(printf '%s' "$input" | "$JQ" -r '
     (.error // empty | tostring) ] | join("\n")' 2>/dev/null) || exit 0
 
 hit=$(printf '%s' "$text" | grep -m1 -E \
-  "(: |\] )Read-only file system|(code|errno) EROFS\b|\bEROFS:|could not lock config file|Unable to create '[^']*\.lock'" \
+  "(: |\] )Read-only file system($|: )|(code|errno) EROFS\b|\bEROFS:|could not lock config file [^ ]+: |Unable to create '[^']*\.lock'" \
   | cut -c1-200)
 [ -n "$hit" ] || exit 0
 
