@@ -92,6 +92,7 @@ for e in "cp: cannot create regular file '/home/u/claude-sandbox/M.md': Read-onl
          "/bin/bash: MEMORY.md: Read-only file system" \
          "OSError: [Errno 30] Read-only file system: 'p.md'" \
          "npm error code EROFS" \
+         "Error: EROFS: read-only file system, open '/home/u/.expo/state.json'" \
          "error: could not lock config file .git/config: File exists" \
          "fatal: Unable to create '/r/.git/index.lock': Read-only file system"; do
   call redirect-blocked-write.sh "$(pf "Exit code 1
@@ -108,7 +109,8 @@ for e in '**"Read-only file system" names one path, not a disk.**' \
          "gave \"Read-only file system\" on touch" \
          "git@github.com: Permission denied (publickey)." \
          "warning: unable to access '/r/.gitmodules': Permission denied" \
-         "rm: cannot remove 'x': Device or resource busy"; do
+         "rm: cannot remove 'x': Device or resource busy" \
+         "2026-08-12 | feedback_never_call_mnt_sda_read_only | the sandbox write policy blocks it and reports EROFS"; do
   call redirect-blocked-write.sh "$(pt "$e")"
   [ "$rc" = 0 ] && ok "ignored: ${e:0:50}" || no "ignored: ${e:0:50}" "rc=$rc"
 done

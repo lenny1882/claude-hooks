@@ -83,7 +83,7 @@ word of `prompt` if `command_name` is ever absent.
 
 `PostToolUse` and `PostToolUseFailure`, matcher `Bash`. When a Bash command's
 output shows the sandbox refusing a write — `path: Read-only file system`,
-`[Errno 30]`, `EROFS`, `could not lock config file`, `Unable to create
+`[Errno 30]`, `code EROFS`, `EROFS:`, `could not lock config file`, `Unable to create
 '….lock'` — it exits 2, and its stderr goes to Claude: the path is writable with
 the Write and Edit tools, maestro-drive scripts go through the bridge, and
 anything that only Bash can do is handed over as one `!` line introduced as
