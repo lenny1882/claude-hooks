@@ -19,6 +19,10 @@ FILES=(
   "hooks/gate-unsandboxed-bash.sh:$CLAUDE_DIR/hooks/gate-unsandboxed-bash.sh"
   "hooks/redirect-blocked-write.sh:$CLAUDE_DIR/hooks/redirect-blocked-write.sh"
   "hooks/check-write-handoff.sh:$CLAUDE_DIR/hooks/check-write-handoff.sh"
+  "hooks/guard-generated-files.sh:$CLAUDE_DIR/hooks/guard-generated-files.sh"
+  "hooks/guard-secret-files.sh:$CLAUDE_DIR/hooks/guard-secret-files.sh"
+  "hooks/check-bare-references.sh:$CLAUDE_DIR/hooks/check-bare-references.sh"
+  "hooks/check-question-ending.sh:$CLAUDE_DIR/hooks/check-question-ending.sh"
 )
 
 # Other directories uninstall.sh removes. Not for state: uninstall.sh already
@@ -44,7 +48,9 @@ settings_merge() {
     .hooks //= {}
     | .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [
         { matcher: "Skill", hooks: [entry("check-discuss-batch.sh")] },
-        { matcher: "Bash",  hooks: [entry("gate-unsandboxed-bash.sh")] }
+        { matcher: "Bash",  hooks: [entry("gate-unsandboxed-bash.sh")] },
+        { matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash", hooks: [entry("guard-generated-files.sh")] },
+        { matcher: "Read|Bash", hooks: [entry("guard-secret-files.sh")] }
       ])
     | .hooks.UserPromptExpansion = ((.hooks.UserPromptExpansion // []) + [
         { hooks: [entry("check-discuss-batch.sh")] }
@@ -56,7 +62,9 @@ settings_merge() {
         { matcher: "Bash", hooks: [entry("redirect-blocked-write.sh")] }
       ])
     | .hooks.Stop = ((.hooks.Stop // []) + [
-        { hooks: [entry("check-write-handoff.sh")] }
+        { hooks: [entry("check-write-handoff.sh")] },
+        { hooks: [entry("check-bare-references.sh")] },
+        { hooks: [entry("check-question-ending.sh")] }
       ])
   '
 }
@@ -68,6 +76,10 @@ REGISTRATIONS=(
   "PostToolUse (matcher: Bash) -> redirect-blocked-write.sh"
   "PostToolUseFailure (matcher: Bash) -> redirect-blocked-write.sh"
   "Stop (no matcher) -> check-write-handoff.sh"
+  "PreToolUse (matcher: Edit|Write|MultiEdit|NotebookEdit|Bash) -> guard-generated-files.sh"
+  "PreToolUse (matcher: Read|Bash) -> guard-secret-files.sh"
+  "Stop (no matcher) -> check-bare-references.sh"
+  "Stop (no matcher) -> check-question-ending.sh"
 )
 
 # Feed each hook a call it must refuse and confirm it does. The PreToolUse two
@@ -86,5 +98,17 @@ verify_probe() {
   [ $? = 2 ] || return 1
   printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"~/x is read-only from this session."}' \
     | bash "$CLAUDE_DIR/hooks/check-write-handoff.sh" >/dev/null 2>&1
+  [ $? = 2 ] || return 1
+  out=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/r/lib/router/routes.gr.dart"}}' \
+    | bash "$CLAUDE_DIR/hooks/guard-generated-files.sh" 2>/dev/null) || return 1
+  printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
+  out=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .env"}}' \
+    | bash "$CLAUDE_DIR/hooks/guard-secret-files.sh" 2>/dev/null) || return 1
+  printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
+  printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"F6 is still open."}' \
+    | bash "$CLAUDE_DIR/hooks/check-bare-references.sh" >/dev/null 2>&1
+  [ $? = 2 ] || return 1
+  printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"The tests pass.\n\nShall I run the build?"}' \
+    | bash "$CLAUDE_DIR/hooks/check-question-ending.sh" >/dev/null 2>&1
   [ $? = 2 ]
 }
