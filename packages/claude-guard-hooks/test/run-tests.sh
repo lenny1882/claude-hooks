@@ -141,6 +141,9 @@ for m in "\`MIGRATION.md\` is updated. Bash's \`cp\` got \"Read-only file system
          "Bash's sandbox blocks deleting it:
 ! rm ~/.claude/projects/p/memory/one-liner-commands.md" \
          "! cd /r && ./gradlew assembleDebug 2>&1 | tail" \
+         "Bash's sandbox blocks writes under ~/.claude/projects:
+! xargs -d '\\n' rm -v -- < /tmp/list.txt > /tmp/rm.log 2>&1; rm -rv ~/.claude/memory >> /tmp/rm.log 2>&1" \
+         "! ./scripts/test.sh up > /tmp/test-up.log 2>&1" \
          "The hook blocks replies that say \"can't write\" next to a \`! cp\`."; do
   call check-write-handoff.sh "$(st "$m")"
   [ "$rc" = 0 ] && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc $(cat "$TMP/err")"
