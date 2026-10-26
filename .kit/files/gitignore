@@ -1,0 +1,16 @@
+# A skill's state, kept in its installed directory. With install.sh --link that
+# directory is skill/ in this checkout. The pattern matches at any depth, so it
+# covers packages/<name>/skill/state/ in a monorepo too.
+**/skill/state/
+
+# Editor and OS noise
+*.bak
+*.bak-*
+.DS_Store
+
+# Sandbox bookkeeping the Claude Code sandbox writes into the repo root. Not
+# part of the package — but .claude/skills/ holds real project skills (the
+# release process), so that one is tracked deliberately.
+.claude/*
+!.claude/skills/
+.mcp.json

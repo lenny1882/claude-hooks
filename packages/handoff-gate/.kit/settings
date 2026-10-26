@@ -1,0 +1,7 @@
+kit=1.2.1
+name=handoff-gate
+kind=hook
+slug=lenny1882/claude-hooks
+monorepo=1
+release=1
+payload=hooks lib

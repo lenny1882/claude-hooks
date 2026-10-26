@@ -1,0 +1,119 @@
+name: Release
+
+# Cutting a release of one package is: push a <package>-vX.Y.Z tag from its
+# release/<package>-vX.x branch. This turns that tag into a GitHub Release
+# carrying that package's install tarball, then records the version in
+# versions.txt on the versions branch, which is what installs and each
+# package's update.sh and lib/update-check.sh read.
+#
+# /releases/latest is no use here: it returns whichever package released last.
+# versions.txt holds one "<package> <version>" line per package instead.
+#
+# GitHub fires this on any matching tag push, regardless of branch — a tag push
+# and a branch push are separate ref events, so `on.push` can't require the tag
+# to belong to a particular branch. The guarantee is process, not CI: the
+# /release skill (.claude/skills/release/SKILL.md) is the only place tags get
+# created, and it only ever tags release/<package>-vX.x after moving it onto
+# main.
+#
+# A hyphen after the version (handoff-gate-v1.2.0-rc1) makes a pre-release,
+# which never reaches versions.txt and so is never offered to anyone. The
+# hyphens in the package name and before the v do not count.
+#
+# The tarball holds only what the package lists in packages/<package>/PAYLOAD,
+# archived from packages/<package> at the tag so it unpacks flat as
+# <package>/. Anything else kept beside the package — backlogs, handoffs,
+# repro projects — stays out. It is uploaded under a fixed name, so
+# .../releases/download/<package>-vX.Y.Z/<package>.tar.gz is always the
+# tarball for that version.
+
+on:
+  push:
+    tags:
+      - '*-v[0-9]*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the package and version from the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^(.+)-v([0-9]+\.[0-9]+\.[0-9]+)(-.+)?$ ]]; then
+            echo "::error::$TAG is not <package>-vX.Y.Z"; exit 1
+          fi
+          pkg="${BASH_REMATCH[1]}"; version="${BASH_REMATCH[2]}"; pre="${BASH_REMATCH[3]}"
+          git cat-file -e "$TAG:packages/$pkg/PAYLOAD" 2>/dev/null \
+            || { echo "::error::no packages/$pkg/PAYLOAD at $TAG"; exit 1; }
+          {
+            echo "PKG=$pkg"
+            echo "VERSION=$version"
+            echo "PRERELEASE=${pre:+1}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build install tarball
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          payload=$(git show "$TAG:packages/$PKG/PAYLOAD")
+          git archive --format=tar.gz \
+            --prefix="$PKG/" \
+            -o "$PKG.tar.gz" \
+            "$TAG:packages/$PKG" -- $payload
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease_flag=()
+          [ -n "$PRERELEASE" ] && prerelease_flag=(--prerelease)
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            "${prerelease_flag[@]}" \
+            "$PKG.tar.gz"
+
+      # Only after the tarball is up, so versions.txt never names a version that
+      # cannot be downloaded. Two packages released together race to push this
+      # branch; the loser's push is rejected as a non-fast-forward, and it
+      # re-reads the branch and tries again. A version lower than the one
+      # already listed (a patch to an older major line) leaves the line alone.
+      - name: Record the version in versions.txt
+        if: env.PRERELEASE == ''
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          for attempt in 1 2 3 4 5; do
+            parent=()
+            if git fetch -q origin versions 2>/dev/null; then
+              parent=(-p FETCH_HEAD)
+              git show FETCH_HEAD:versions.txt > versions.txt 2>/dev/null || : > versions.txt
+            else
+              : > versions.txt
+            fi
+
+            listed=$(awk -v p="$PKG" '$1 == p { print $2 }' versions.txt)
+            if [ -n "$listed" ] && [ "$(printf '%s\n%s\n' "$listed" "$VERSION" | sort -V | tail -1)" = "$listed" ]; then
+              echo "versions.txt already lists $PKG $listed; leaving it"; exit 0
+            fi
+
+            { awk -v p="$PKG" '$1 != p' versions.txt; echo "$PKG $VERSION"; } | sort > versions.new
+            blob=$(git hash-object -w versions.new)
+            tree=$(printf '100644 blob %s\tversions.txt\n' "$blob" | git mktree)
+            commit=$(git commit-tree "$tree" "${parent[@]}" -m "$PKG $VERSION")
+            if git push -q origin "$commit:refs/heads/versions"; then
+              echo "versions.txt now lists $PKG $VERSION"; exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::could not update the versions branch after 5 attempts"; exit 1

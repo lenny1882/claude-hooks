@@ -1,0 +1,14 @@
+# Editor and OS noise
+*.bak
+*.bak-*
+.DS_Store
+
+# Sandbox bookkeeping the Claude Code sandbox writes into the repo root. Not
+# part of the package — but .claude/skills/ holds real project skills (the
+# release process), so that one is tracked deliberately.
+.claude/*
+!.claude/skills/
+.mcp.json
+
+# Added by claude-package-kit upgrade-package.sh
+**/skill/state/
