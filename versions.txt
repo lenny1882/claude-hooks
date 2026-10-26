@@ -1,2 +1,3 @@
 claude-guard-hooks 1.0.0
 handoff-gate 1.0.0
+inventory-guard 1.0.0
