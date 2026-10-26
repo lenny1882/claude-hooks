@@ -132,7 +132,9 @@ for m in "The updated MIGRATION.md is ready, but I couldn't save it over the ori
          "Building the app is blocked. The Bash sandbox won't let me write to it." \
          "The sandbox can't write to ~/claude-sandbox." \
          "Run:
-! echo '- [x](x.md)' >> ~/.claude/projects/p/memory/MEMORY.md"; do
+! echo '- [x](x.md)' >> ~/.claude/projects/p/memory/MEMORY.md" \
+         "! cd /r && cp /tmp/a.md docs/a.md" \
+         "! install -m 644 /tmp/a.conf ~/.config/a.conf"; do
   call check-write-handoff.sh "$(st "$m")"
   blocked && ok "blocks: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "blocks: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc"
 done
@@ -146,6 +148,9 @@ for m in "\`MIGRATION.md\` is updated. Bash's \`cp\` got \"Read-only file system
          "Bash's sandbox blocks writes under ~/.claude/projects:
 ! xargs -d '\\n' rm -v -- < /tmp/list.txt > /tmp/rm.log 2>&1; rm -rv ~/.claude/memory >> /tmp/rm.log 2>&1" \
          "! ./scripts/test.sh up > /tmp/test-up.log 2>&1" \
+         "Bash's sandbox blocks writes to ~/.claude/hooks:
+! cd /opt/tools && curl -fsSL https://x/p.tar.gz | tar -xz && cd p && ./install.sh --yes" \
+         "! bash scripts/cp-assets.sh && make" \
          "The hook blocks replies that say \"can't write\" next to a \`! cp\`."; do
   call check-write-handoff.sh "$(st "$m")"
   [ "$rc" = 0 ] && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc $(cat "$TMP/err")"

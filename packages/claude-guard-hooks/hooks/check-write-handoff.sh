@@ -17,6 +17,8 @@
 #    echo/printf/cat redirected into a file, git remote add/set-url, git config.
 #    A redirect on any other command is taken as capturing its log — `rm -v …
 #    > /tmp/x.log` deletes files, which Write and Edit cannot do.
+# The command names count only as commands — a space or separator before, a
+# space after — so `./install.sh` or `scripts/cp-assets.sh` is not a write.
 # A `! git push` or `! rm` hand-off is not matched; those have no Write or Edit
 # equivalent and are allowed, provided they are not introduced as "can't write".
 # The phrases are first-person on purpose: a reply that quotes an error or
@@ -51,7 +53,7 @@ claim=$(printf '%s' "$msg" | grep -m1 -i -o -E \
   "\b(I|we) (can'?t|cannot|could ?n.?t|am unable to|was unable to) (write|save|create|update|edit|touch|overwrite)[^.]{0,60}|\b(is|are) read-only (from|in|for|inside) (this|the) (session|sandbox|shell)|sandbox (can'?t|cannot|won'?t let me|doesn'?t let me) (write|save)[^.]{0,60}")
 
 handoff=$(printf '%s' "$msg" | grep -m1 -o -E \
-  "^[[:space:]]*!.*\b(cp|tee|touch|install)\b[^|]*$|^[[:space:]]*!.*\b(echo|printf|cat)\b[^|;&]*[^2&]>>? *[~/.\$\"'][^ ]*|^[[:space:]]*!.*\bgit( -C [^ ]+)? (remote (add|set-url)|config)\b.*" \
+  "^[[:space:]]*!.*(^|[[:space:];&|(])(cp|tee|touch|install)[[:space:]][^|]*$|^[[:space:]]*!.*\b(echo|printf|cat)\b[^|;&]*[^2&]>>? *[~/.\$\"'][^ ]*|^[[:space:]]*!.*\bgit( -C [^ ]+)? (remote (add|set-url)|config)\b.*" \
   | cut -c1-160)
 
 [ -n "$claim$handoff" ] || exit 0
