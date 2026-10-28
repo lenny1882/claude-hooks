@@ -1,8 +1,13 @@
 #!/bin/bash
 # Stop hook — flags a reply that uses a reference id without saying what it
 # is: an F-number from a held-back list (F6), an answer code (1b, 2a), a GSD
-# decision id (D-18) or a requirement id (ASGN-06, CHAT-01). The user sees one
-# line; Claude is told with the user's next prompt (deliver-stop-guidance.sh).
+# decision id (D-18) or a requirement id (ASGN-06, CHAT-01), and wakes Claude to
+# follow up saying what each one is.
+#
+# Registered with asyncRewake: it runs after the turn ends, and exit 2 wakes
+# Claude with the guidance on stderr. The user sees only the entry's
+# rewakeSummary line. A block reason or additionalContext would be printed to
+# the user in full; Claude Code does that for every Stop hook.
 #
 # Background. Between 28 Sep and 26 Oct 2026 the user had to ask what a bare
 # reference meant, or ask for a question "again, fully", in eight sessions
@@ -21,8 +26,8 @@
 # Jira keys (HBS-53, HBD20-1801) are not checked: the user works in them all
 # day. Requirement ids are told apart by the leading zero GSD gives them.
 #
-# Ignores a turn that another Stop hook has already sent back
-# (stop_hook_active). Needs perl; without it, or without jq, it does nothing.
+# Honours stop_hook_active, so a false match costs one extra pass, not a loop.
+# Needs perl; without it, or without jq, it lets the turn end.
 
 JQ=$(command -v jq || echo /usr/bin/jq)
 [ -x "$JQ" ] || exit 0
@@ -68,24 +73,13 @@ bare=$(printf '%s' "$msg" | perl -0777 -ne '
 ')
 [ -n "$bare" ] || exit 0
 
-guidance=$(cat <<EOF
-Your previous reply used references without saying what they are: $bare
+cat >&2 <<EOF
+Your reply used references without saying what they are: $bare
 
 The user cannot hold every id from earlier in the session in their head, and
-an answer like "1b" or "F6 is done" makes them scroll back or ask. Wherever
-you use one, say what it is in plain words — "F12 (adding the nine memory
+an answer like "1b" or "F6 is done" makes them scroll back or ask. Follow up
+now, saying what each one is in plain words — "F12 (adding the nine memory
 files to their indexes)", "D-18, the rule that a deleted location sends the
 user back to user select".
 EOF
-)
-
-# The user sees one line. Claude gets the guidance with the user's next prompt,
-# through deliver-stop-guidance.sh: anything a Stop hook sends Claude directly
-# is printed to the user in full.
-sid=$(printf '%s' "$input" | "$JQ" -r '.session_id // empty' | tr -cd 'A-Za-z0-9_-')
-if [ -n "$sid" ]; then
-  dir="${CLAUDE_DIR:-$HOME/.claude}/claude-guard-hooks/pending"
-  mkdir -p "$dir" && printf '%s\n' "$guidance" > "$dir/$sid.check-bare-references.txt"
-fi
-"$JQ" -n --arg b "$bare" '{ systemMessage: ("Reply used unexplained ids: " + $b) }'
-exit 0
+exit 2

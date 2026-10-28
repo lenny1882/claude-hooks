@@ -106,16 +106,16 @@ prose, does not set it off. `Permission denied (publickey)` and git's
 ## check-write-handoff.sh
 
 `Stop`, no matcher. The second layer, for when the first is ignored: it reads
-the reply and flags it if it claims, in the first person, that something
+the reply and catches it if it claims, in the first person, that something
 cannot be written ("I couldn't save it", "is read-only from this session",
 "the sandbox won't let me write"), or hands you a `!` command that only writes
 a file — `cp`, `tee`, `touch`, a `>` redirect, `git remote add`, `git config`.
-You see one line. With your next message, Claude is told to do the write with
-Write or Edit (see `deliver-stop-guidance.sh`).
+Claude is woken straight away to do the write with Write or Edit.
 
 `! git push`, `! rm` and a build are allowed; they have no Write or Edit
 equivalent. It reads `last_assistant_message`, and falls back to the
-transcript's tail on a Claude Code too old to send it.
+transcript's tail on a Claude Code too old to send it. It skips the
+follow-up turn it caused (`stop_hook_active`), so it cannot loop.
 
 ## guard-generated-files.sh
 
@@ -154,31 +154,28 @@ files is refused; a denylist of printing commands would always be one short.
 
 ## check-bare-references.sh
 
-`Stop`. Flags a reply that uses a reference without saying what it is: an
+`Stop`. Catches a reply that uses a reference without saying what it is: an
 F-number from a held-back list, an answer code (`1b`), a GSD decision id
 (`D-18`) or a requirement id (`ASGN-06`). Explained means followed by its
 description (`F17.`, `F17:`, `F17 —`, `F17 (…`, `D-18 is the …`), a list line
 starting with it, or sitting in parentheses after one. Code is ignored. Jira
-keys are not checked. You see one line naming the ids; Claude is told with
-your next message.
+keys are not checked. Claude is woken straight away to say what each id is.
 
 Answer codes only count in a sentence about answers or options, or with a
 second code beside them, so "a 3d model" is left alone.
 
-## deliver-stop-guidance.sh
+## What you see from the Stop hooks
 
-`UserPromptSubmit`, no matcher. A Stop hook cannot tell Claude anything
-without telling you too: Claude Code prints a Stop hook's `additionalContext`
-as "Stop hook feedback: …" and a block reason as "Stop hook error: …", in
-full. So the two Stop hooks above print only their one-line `systemMessage`
-and write their guidance to
-`~/.claude/claude-guard-hooks/pending/<session_id>.<hook>.txt`. This hook
-hands it to Claude as `additionalContext` when you send your next message in
-that session, which Claude Code does not display, and deletes it. Files left by
-a session you never returned to are deleted after a day.
+Claude Code prints a Stop hook's block reason ("Stop hook error: …") and its
+`additionalContext` ("Stop hook feedback: …") to you in full. So neither Stop
+hook uses them. Both are registered with `asyncRewake: true`: they run once the
+turn has ended, and exit 2 with the guidance on stderr. Claude Code wakes
+Claude with that guidance and shows you only the entry's `rewakeSummary` —
+"Reply used an unexplained id" or "Reply handed you a write Claude can do
+itself" — followed by Claude's follow-up.
 
-The cost: the reply that set a Stop hook off stands as written, and Claude
-acts on the guidance in its next reply.
+`rewakeSummary` is marked internal in Claude Code's settings schema (2.1.312).
+If a later Claude Code drops it, the line falls back to "Stop hook feedback".
 
 ## Install
 

@@ -22,7 +22,6 @@ FILES=(
   "hooks/guard-generated-files.sh:$CLAUDE_DIR/hooks/guard-generated-files.sh"
   "hooks/guard-secret-files.sh:$CLAUDE_DIR/hooks/guard-secret-files.sh"
   "hooks/check-bare-references.sh:$CLAUDE_DIR/hooks/check-bare-references.sh"
-  "hooks/deliver-stop-guidance.sh:$CLAUDE_DIR/hooks/deliver-stop-guidance.sh"
 )
 
 # Other directories uninstall.sh removes. Not for state: uninstall.sh already
@@ -42,10 +41,25 @@ STATE_DIRS=()
 #
 # Commands keep the "bash ~/.claude/hooks/<script>" form the pre-kit installer
 # wrote, so reinstalling over that install replaces its entries in place.
+#
+# The first build of 1.3.1 (withdrawn 28 Oct 2026) shipped deliver-stop-guidance.sh on
+# UserPromptSubmit; the rebuilt 1.3.1 dropped it.
+# It is no longer in FILES, so the installer would not find its entry: this
+# removes the entry, the script and its queue.
 settings_merge() {
+  if [ "${DRY:-0}" -ne 1 ]; then
+    rm -f "$CLAUDE_DIR/hooks/deliver-stop-guidance.sh"
+    rm -rf "$CLAUDE_DIR/claude-guard-hooks/pending"
+  fi
   jq '
     def entry($s): { type: "command", command: ("bash ~/.claude/hooks/" + $s) };
+    def rewake($s; $summary): entry($s) + { asyncRewake: true, rewakeSummary: $summary };
     .hooks //= {}
+    | if .hooks.UserPromptSubmit then
+        .hooks.UserPromptSubmit |= (map(.hooks |= map(select((.command // "") | contains("deliver-stop-guidance.sh") | not)))
+                                    | map(select((.hooks | length) > 0)))
+        | if .hooks.UserPromptSubmit == [] then del(.hooks.UserPromptSubmit) else . end
+      else . end
     | .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [
         { matcher: "Skill", hooks: [entry("check-discuss-batch.sh")] },
         { matcher: "Bash",  hooks: [entry("gate-unsandboxed-bash.sh")] },
@@ -62,11 +76,8 @@ settings_merge() {
         { matcher: "Bash", hooks: [entry("redirect-blocked-write.sh")] }
       ])
     | .hooks.Stop = ((.hooks.Stop // []) + [
-        { hooks: [entry("check-write-handoff.sh")] },
-        { hooks: [entry("check-bare-references.sh")] }
-      ])
-    | .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) + [
-        { hooks: [entry("deliver-stop-guidance.sh")] }
+        { hooks: [rewake("check-write-handoff.sh"; "Reply handed you a write Claude can do itself")] },
+        { hooks: [rewake("check-bare-references.sh"; "Reply used an unexplained id")] }
       ])
   '
 }
@@ -77,17 +88,14 @@ REGISTRATIONS=(
   "UserPromptExpansion (no matcher) -> check-discuss-batch.sh"
   "PostToolUse (matcher: Bash) -> redirect-blocked-write.sh"
   "PostToolUseFailure (matcher: Bash) -> redirect-blocked-write.sh"
-  "Stop (no matcher) -> check-write-handoff.sh"
+  "Stop (no matcher, asyncRewake) -> check-write-handoff.sh"
   "PreToolUse (matcher: Edit|Write|MultiEdit|NotebookEdit|Bash) -> guard-generated-files.sh"
   "PreToolUse (matcher: Read|Bash) -> guard-secret-files.sh"
-  "Stop (no matcher) -> check-bare-references.sh"
-  "UserPromptSubmit (no matcher) -> deliver-stop-guidance.sh"
+  "Stop (no matcher, asyncRewake) -> check-bare-references.sh"
 )
 
 # Feed each hook a call it must refuse and confirm it does. The PreToolUse ones
-# deny rather than ask; the Stop ones print a line and queue guidance that
-# deliver-stop-guidance.sh hands back, which also empties the queue the probes
-# leave for the made-up session "install-probe". A hook that stopped
+# deny rather than ask; the Stop ones exit 2 with guidance on stderr. A hook that stopped
 # doing either would install cleanly and do nothing.
 verify_probe() {
   local out
@@ -100,22 +108,14 @@ verify_probe() {
   printf '%s' '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","error":"cp: cannot create regular file '"'"'/x'"'"': Read-only file system"}' \
     | bash "$CLAUDE_DIR/hooks/redirect-blocked-write.sh" 2>/dev/null \
     | jq -se '.[0].hookSpecificOutput.additionalContext' >/dev/null 2>&1 || return 1
-  printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"session_id":"install-probe","last_assistant_message":"~/x is read-only from this session."}' \
-    | bash "$CLAUDE_DIR/hooks/check-write-handoff.sh" 2>/dev/null \
-    | jq -se '.[0].systemMessage' >/dev/null 2>&1 || return 1
-  printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"install-probe","prompt":"x"}' \
-    | bash "$CLAUDE_DIR/hooks/deliver-stop-guidance.sh" 2>/dev/null \
-    | jq -se '.[0].hookSpecificOutput.additionalContext' >/dev/null 2>&1 || return 1
+  printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"~/x is read-only from this session."}' \
+    | bash "$CLAUDE_DIR/hooks/check-write-handoff.sh" >/dev/null 2>&1; [ $? = 2 ] || return 1
   out=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/r/lib/router/routes.gr.dart"}}' \
     | bash "$CLAUDE_DIR/hooks/guard-generated-files.sh" 2>/dev/null) || return 1
   printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
   out=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .env"}}' \
     | bash "$CLAUDE_DIR/hooks/guard-secret-files.sh" 2>/dev/null) || return 1
   printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
-  printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"session_id":"install-probe","last_assistant_message":"F6 is still open."}' \
-    | bash "$CLAUDE_DIR/hooks/check-bare-references.sh" 2>/dev/null \
-    | jq -se '.[0].systemMessage' >/dev/null 2>&1 || return 1
-  printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"install-probe","prompt":"x"}' \
-    | bash "$CLAUDE_DIR/hooks/deliver-stop-guidance.sh" 2>/dev/null \
-    | jq -se '.[0].hookSpecificOutput.additionalContext' >/dev/null 2>&1
+  printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"F6 is still open."}' \
+    | bash "$CLAUDE_DIR/hooks/check-bare-references.sh" >/dev/null 2>&1; [ $? = 2 ] || return 1
 }
