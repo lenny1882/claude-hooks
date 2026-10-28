@@ -1,7 +1,8 @@
 #!/bin/bash
-# Stop hook — refuses to end a turn whose reply tells the user a file cannot be
-# written, or hands them a `!` command that only writes a file, and sends Claude
-# back to do the write with the Write or Edit tool.
+# Stop hook — flags a reply that tells the user a file cannot be written, or
+# hands them a `!` command that only writes a file. The user sees one line;
+# with their next prompt, Claude is told to do the write with the Write or
+# Edit tool (deliver-stop-guidance.sh).
 #
 # Background. redirect-blocked-write.sh speaks when a Bash write fails. This is
 # the second layer, for when that advice is ignored: it reads the reply itself.
@@ -24,8 +25,8 @@
 # The phrases are first-person on purpose: a reply that quotes an error or
 # discusses this hook should not be sent back.
 #
-# Honours stop_hook_active: the second time round the turn ends whatever the
-# reply says, so a false match costs one extra pass, never a loop.
+# Ignores a turn that another Stop hook has already sent back
+# (stop_hook_active).
 
 JQ=$(command -v jq || echo /usr/bin/jq)
 [ -x "$JQ" ] || exit 0
@@ -59,17 +60,17 @@ handoff=$(printf '%s' "$msg" | grep -m1 -o -E \
 [ -n "$claim$handoff" ] || exit 0
 
 guidance=$({
-  echo "This reply hands the user a write that the Write or Edit tool can do:"
+  echo "Your previous reply handed the user a write that the Write or Edit tool can do:"
   echo
   [ -n "$claim" ]   && echo "  $claim"
   [ -n "$handoff" ] && echo "  $handoff"
   echo
   cat <<'EOF'
 The sandbox gates Bash only; Write and Edit reach ~/claude-sandbox, ~/.claude,
-.git/config and everywhere else Bash's writes fail. Do the write now: Read the
-file, then Write or Edit it. Then rewrite the reply so it reports the file as
-written and contains no "can't write" or "read-only" claim and no `!` command
-for it.
+.git/config and everywhere else Bash's writes fail. Unless the user's new
+message has made it moot, do the write now: Read the file, then Write or Edit
+it, and tell the user in one line that it is written, with no "can't write" or
+"read-only" claim.
 
 If what you handed over really has no Write or Edit equivalent (rm, mv of a
 directory, git commit, a build), keep it as one `!` line, introduced as "Bash's
@@ -78,9 +79,13 @@ unwritable. See ~/.claude/reference/this-machine.md.
 EOF
 })
 
-# The guidance goes to Claude as additionalContext; the user sees one line.
-"$JQ" -n --arg g "$guidance" '{
-  systemMessage: "Reply handed you a write Claude can do itself; sent back to do it",
-  hookSpecificOutput: { hookEventName: "Stop", additionalContext: $g }
-}'
+# The user sees one line. Claude gets the guidance with the user's next prompt,
+# through deliver-stop-guidance.sh: anything a Stop hook sends Claude directly
+# is printed to the user in full.
+sid=$(printf '%s' "$input" | "$JQ" -r '.session_id // empty' | tr -cd 'A-Za-z0-9_-')
+if [ -n "$sid" ]; then
+  dir="${CLAUDE_DIR:-$HOME/.claude}/claude-guard-hooks/pending"
+  mkdir -p "$dir" && printf '%s\n' "$guidance" > "$dir/$sid.check-write-handoff.txt"
+fi
+"$JQ" -n '{ systemMessage: "Reply handed you a write Claude can do itself" }'
 exit 0

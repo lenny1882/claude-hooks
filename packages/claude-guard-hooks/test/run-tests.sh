@@ -21,7 +21,7 @@ no(){ printf '  FAIL  %s\n    %s\n' "$1" "$2"; fail=$((fail+1)); }
 # registered commands, but these commands are paths to the hook scripts and
 # never contain it, so that check passes whatever uninstall leaves behind. This
 # one looks for the scripts.
-jq -e '[.. | .command? // empty] | any(test("check-discuss-batch\\.sh|gate-unsandboxed-bash\\.sh|redirect-blocked-write\\.sh|check-write-handoff\\.sh|guard-generated-files\\.sh|guard-secret-files\\.sh|check-bare-references\\.sh"))' \
+jq -e '[.. | .command? // empty] | any(test("check-discuss-batch\\.sh|gate-unsandboxed-bash\\.sh|redirect-blocked-write\\.sh|check-write-handoff\\.sh|guard-generated-files\\.sh|guard-secret-files\\.sh|check-bare-references\\.sh|deliver-stop-guidance\\.sh"))' \
   "$CLAUDE_DIR/settings.json" >/dev/null 2>&1 \
   && no "uninstall removes the hook scripts' entries" "still registered" \
   || ok "uninstall removes the hook scripts' entries"
@@ -37,6 +37,17 @@ denied(){ [ -s "$TMP/out" ] \
 blocked(){ [ "$rc" = 2 ] && [ -s "$TMP/err" ]; }
 # Sent back to Claude through additionalContext, with a line for the user.
 fed(){ [ "$rc" = 0 ] && [ -s "$TMP/out" ] && jq -e ".hookSpecificOutput.additionalContext and .systemMessage" "$TMP/out" >/dev/null 2>&1; }
+# A Stop hook: one line for the user, nothing for Claude in the output, and the
+# guidance queued for deliver-stop-guidance.sh. Clears the queue as it checks.
+PENDING="$CLAUDE_DIR/claude-guard-hooks/pending"
+queued(){ local ok=1
+  [ "$rc" = 0 ] && [ -s "$TMP/out" ] \
+    && jq -e '.systemMessage and (has("hookSpecificOutput") | not)' "$TMP/out" >/dev/null 2>&1 \
+    && ls "$PENDING"/s1.*.txt >/dev/null 2>&1 && ok=0
+  cat "$PENDING"/s1.*.txt > "$TMP/queued" 2>/dev/null; rm -f "$PENDING"/s1.*.txt
+  return $ok; }
+# A Stop hook that let the reply through: no output and nothing queued.
+quiet(){ [ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && ! ls "$PENDING"/s1.*.txt >/dev/null 2>&1; }
 
 echo "gate-unsandboxed-bash"
 j(){ jq -nc --argjson s "$1" '{hook_event_name:"PreToolUse",tool_name:"Bash",
@@ -123,7 +134,7 @@ call redirect-blocked-write.sh "$(jq -nc '{hook_event_name:"PostToolUse",tool_na
 [ "$rc" = 0 ] && ok "a string tool_response is tolerated" || no "a string tool_response is tolerated" "rc=$rc"
 
 echo "check-write-handoff"
-st(){ jq -nc --arg m "$1" --argjson a "${2:-false}" '{hook_event_name:"Stop",stop_hook_active:$a,last_assistant_message:$m}'; }
+st(){ jq -nc --arg m "$1" --argjson a "${2:-false}" '{hook_event_name:"Stop",session_id:"s1",stop_hook_active:$a,last_assistant_message:$m}'; }
 # The four replies the user corrected on 26 Oct 2026, cut down.
 for m in "The updated MIGRATION.md is ready, but I couldn't save it over the original: ~/claude-sandbox is read-only from this session." \
          "To put it in place, type:
@@ -141,9 +152,9 @@ for m in "The updated MIGRATION.md is ready, but I couldn't save it over the ori
          "! cd /r && cp /tmp/a.md docs/a.md" \
          "! install -m 644 /tmp/a.conf ~/.config/a.conf"; do
   call check-write-handoff.sh "$(st "$m")"
-  fed && ok "blocks: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "blocks: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc"
+  queued && ok "flags: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "flags: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc"
 done
-grep -q "Write or Edit" "$TMP/out" && ok "the message names Write and Edit" || no "the message names Write and Edit" "$(cat "$TMP/out")"
+grep -q "Write or Edit" "$TMP/queued" && ok "the queued guidance names Write and Edit" || no "the queued guidance names Write and Edit" "$(cat "$TMP/queued")"
 for m in "\`MIGRATION.md\` is updated. Bash's \`cp\` got \"Read-only file system\", but the Write tool wrote the file directly." \
          "Bash's sandbox blocks writes to ~/.ssh, so push from your prompt:
 ! git push --atomic origin main release/x-v1.x x-v1.2.0" \
@@ -158,10 +169,10 @@ for m in "\`MIGRATION.md\` is updated. Bash's \`cp\` got \"Read-only file system
          "! bash scripts/cp-assets.sh && make" \
          "The hook blocks replies that say \"can't write\" next to a \`! cp\`."; do
   call check-write-handoff.sh "$(st "$m")"
-  [ "$rc" = 0 ] && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc $(cat "$TMP/out")"
+  quiet && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc $(cat "$TMP/out")"
 done
 call check-write-handoff.sh "$(st "I can't write to it." true)"
-[ "$rc" = 0 ] && ok "stop_hook_active lets the turn end" || no "stop_hook_active lets the turn end" "rc=$rc"
+quiet && ok "stop_hook_active is left alone" || no "stop_hook_active is left alone" "rc=$rc"
 # No last_assistant_message: read the reply from the transcript, and only the
 # part after the user's last prompt.
 { jq -nc '{type:"assistant",message:{content:[{type:"text",text:"Earlier: ~/x is read-only from this session."}]}}'
@@ -170,11 +181,11 @@ call check-write-handoff.sh "$(st "I can't write to it." true)"
   jq -nc '{type:"user",message:{content:[{type:"tool_result",content:"ok"}]}}'
   jq -nc '{type:"assistant",message:{content:[{type:"text",text:"Written with the Write tool."}]}}'
 } > "$TMP/t.jsonl"
-call check-write-handoff.sh "$(jq -nc --arg t "$TMP/t.jsonl" '{hook_event_name:"Stop",stop_hook_active:false,transcript_path:$t}')"
-[ "$rc" = 0 ] && ok "transcript fallback reads only the current reply" || no "transcript fallback reads only the current reply" "rc=$rc"
+call check-write-handoff.sh "$(jq -nc --arg t "$TMP/t.jsonl" '{hook_event_name:"Stop",session_id:"s1",stop_hook_active:false,transcript_path:$t}')"
+quiet && ok "transcript fallback reads only the current reply" || no "transcript fallback reads only the current reply" "rc=$rc"
 jq -nc '{type:"assistant",message:{content:[{type:"text",text:"I couldn'"'"'t write the file."}]}}' >> "$TMP/t.jsonl"
-call check-write-handoff.sh "$(jq -nc --arg t "$TMP/t.jsonl" '{hook_event_name:"Stop",stop_hook_active:false,transcript_path:$t}')"
-fed && ok "transcript fallback catches the claim" || no "transcript fallback catches the claim" "rc=$rc"
+call check-write-handoff.sh "$(jq -nc --arg t "$TMP/t.jsonl" '{hook_event_name:"Stop",session_id:"s1",stop_hook_active:false,transcript_path:$t}')"
+queued && ok "transcript fallback catches the claim" || no "transcript fallback catches the claim" "rc=$rc"
 
 echo "guard-generated-files"
 ed(){ jq -nc --arg t "$1" --arg p "$2" --arg c "${3:-}" '{hook_event_name:"PreToolUse",tool_name:$t,
@@ -240,9 +251,9 @@ for m in "F6 is still open, and 1b needs your answer." \
          "Done. F12 can go next." \
          "F6 is still open."; do
   call check-bare-references.sh "$(st "$m")"
-  fed && ok "blocks: $m" || no "blocks: $m" "rc=$rc"
+  queued && ok "flags: $m" || no "flags: $m" "rc=$rc"
 done
-grep -q "plain words" "$TMP/out" && ok "the message says what to do" || no "the message says what to do" "$(cat "$TMP/out")"
+grep -q "plain words" "$TMP/queued" && ok "the queued guidance says what to do" || no "the queued guidance says what to do" "$(cat "$TMP/queued")"
 for m in "F12 (adding the nine memory files to their indexes) is done." \
          "**F17.** Generated-files hook: built and tested." \
          "D-18 is the rule that a deleted location sends the user to user select; it still holds." \
@@ -255,10 +266,33 @@ for m in "F12 (adding the nine memory files to their indexes) is done." \
          "Run \`git log F6..main\` to see them." \
          "Commit 4b71a03b and session 1cf3ff3c, both on a 3d model."; do
   call check-bare-references.sh "$(st "$m")"
-  [ "$rc" = 0 ] && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-50)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-50)" "rc=$rc $(cat "$TMP/out")"
+  quiet && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-50)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-50)" "rc=$rc $(cat "$TMP/out")"
 done
 call check-bare-references.sh "$(st "F6 is open." true)"
-[ "$rc" = 0 ] && ok "stop_hook_active lets the turn end" || no "stop_hook_active lets the turn end" "rc=$rc"
+quiet && ok "stop_hook_active is left alone" || no "stop_hook_active is left alone" "rc=$rc"
+
+echo "deliver-stop-guidance"
+ups(){ jq -nc --arg s "$1" '{hook_event_name:"UserPromptSubmit",session_id:$s,prompt:"next"}'; }
+call check-bare-references.sh "$(st "F6 is still open.")"
+call check-write-handoff.sh "$(st "~/x is read-only from this session.")"
+call deliver-stop-guidance.sh "$(ups s2)"
+[ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && ok "another session's prompt gets nothing" || no "another session's prompt gets nothing" "$(cat "$TMP/out")"
+call deliver-stop-guidance.sh "$(ups s1)"
+jq -e '.hookSpecificOutput.hookEventName == "UserPromptSubmit"
+       and (.hookSpecificOutput.additionalContext | contains("plain words") and contains("Write or Edit"))
+       and (has("systemMessage") | not)' "$TMP/out" >/dev/null 2>&1 \
+  && ok "the next prompt carries both hooks' guidance, and nothing for the user" \
+  || no "the next prompt carries both hooks' guidance, and nothing for the user" "$(cat "$TMP/out")"
+ls "$PENDING"/s1.*.txt >/dev/null 2>&1 && no "delivered guidance is deleted" "still queued" || ok "delivered guidance is deleted"
+call deliver-stop-guidance.sh "$(ups s1)"
+quiet && ok "it is delivered once" || no "it is delivered once" "$(cat "$TMP/out")"
+call check-bare-references.sh "$(st "F6 is still open.")"
+touch -d '2 days ago' "$PENDING"/s1.*.txt
+call deliver-stop-guidance.sh "$(ups s9)"
+ls "$PENDING"/s1.*.txt >/dev/null 2>&1 && no "a day-old queue file is cleared" "still there" || ok "a day-old queue file is cleared"
+call check-bare-references.sh "$(jq -nc '{hook_event_name:"Stop",stop_hook_active:false,last_assistant_message:"F6 is open."}')"
+jq -e .systemMessage "$TMP/out" >/dev/null 2>&1 && [ -z "$(ls -A "$PENDING")" ] \
+  && ok "no session_id: the line still shows, nothing is queued" || no "no session_id: the line still shows, nothing is queued" "$(ls "$PENDING")"
 
 echo "installer — beside claude-branch-guard"
 cat > "$CLAUDE_DIR/settings.json" <<'JSON'
@@ -273,6 +307,8 @@ count(){ jq "[.hooks[$1][]?.hooks[]] | length" "$CLAUDE_DIR/settings.json"; }
 [ "$(count '"UserPromptExpansion"')" = 1 ] && ok "registers the typed-command hook" \
   || no "registers the typed-command hook" "got $(count '"UserPromptExpansion"')"
 [ "$(count '"Stop"')" = 2 ] && ok "registers the two Stop hooks" || no "registers the two Stop hooks" "got $(count '"Stop"')"
+[ "$(count '"UserPromptSubmit"')" = 1 ] && ok "registers the prompt hook that delivers their guidance" \
+  || no "registers the prompt hook that delivers their guidance" "got $(count '"UserPromptSubmit"')"
 for ev in PostToolUse PostToolUseFailure; do
   [ "$(count "\"$ev\"")" = 1 ] && ok "registers the $ev hook" || no "registers the $ev hook" "got $(count "\"$ev\"")"
 done
@@ -291,7 +327,7 @@ jq -e '[.hooks.PreToolUse[].hooks[].command] | any(contains("check-branch-naming
 [ "$(count '"PreToolUse"')" = 1 ] && ok "uninstall removes only its own" || no "uninstall removes only its own" "got $(count '"PreToolUse"')"
 jq -e '.hooks | has("UserPromptExpansion") | not' "$CLAUDE_DIR/settings.json" >/dev/null \
   && ok "uninstall drops the emptied event" || no "uninstall drops the emptied event" "the key is still there"
-jq -e '.hooks | (has("PostToolUse") or has("PostToolUseFailure") or has("Stop")) | not' "$CLAUDE_DIR/settings.json" >/dev/null \
+jq -e '.hooks | (has("PostToolUse") or has("PostToolUseFailure") or has("Stop") or has("UserPromptSubmit")) | not' "$CLAUDE_DIR/settings.json" >/dev/null \
   && ok "uninstall drops the new events too" || no "uninstall drops the new events too" "$(jq -c .hooks "$CLAUDE_DIR/settings.json")"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

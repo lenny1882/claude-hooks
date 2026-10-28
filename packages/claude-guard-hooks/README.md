@@ -106,17 +106,16 @@ prose, does not set it off. `Permission denied (publickey)` and git's
 ## check-write-handoff.sh
 
 `Stop`, no matcher. The second layer, for when the first is ignored: it reads
-the reply and refuses to end the turn if it claims, in the first person, that
-something cannot be written ("I couldn't save it", "is read-only from this
-session", "the sandbox won't let me write"), or hands you a `!` command that
-only writes a file — `cp`, `tee`, `touch`, a `>` redirect, `git remote add`,
-`git config`. Claude is sent back to do the write with Write or Edit and
-rewrite the reply.
+the reply and flags it if it claims, in the first person, that something
+cannot be written ("I couldn't save it", "is read-only from this session",
+"the sandbox won't let me write"), or hands you a `!` command that only writes
+a file — `cp`, `tee`, `touch`, a `>` redirect, `git remote add`, `git config`.
+You see one line. With your next message, Claude is told to do the write with
+Write or Edit (see `deliver-stop-guidance.sh`).
 
 `! git push`, `! rm` and a build are allowed; they have no Write or Edit
 equivalent. It reads `last_assistant_message`, and falls back to the
-transcript's tail on a Claude Code too old to send it. It honours
-`stop_hook_active`, so a false match costs one extra pass, not a loop.
+transcript's tail on a Claude Code too old to send it.
 
 ## guard-generated-files.sh
 
@@ -155,15 +154,31 @@ files is refused; a denylist of printing commands would always be one short.
 
 ## check-bare-references.sh
 
-`Stop`. Refuses to end a turn whose reply uses a reference without saying what
-it is: an F-number from a held-back list, an answer code (`1b`), a GSD decision
-id (`D-18`) or a requirement id (`ASGN-06`). Explained means followed by its
+`Stop`. Flags a reply that uses a reference without saying what it is: an
+F-number from a held-back list, an answer code (`1b`), a GSD decision id
+(`D-18`) or a requirement id (`ASGN-06`). Explained means followed by its
 description (`F17.`, `F17:`, `F17 —`, `F17 (…`, `D-18 is the …`), a list line
 starting with it, or sitting in parentheses after one. Code is ignored. Jira
-keys are not checked.
+keys are not checked. You see one line naming the ids; Claude is told with
+your next message.
 
 Answer codes only count in a sentence about answers or options, or with a
 second code beside them, so "a 3d model" is left alone.
+
+## deliver-stop-guidance.sh
+
+`UserPromptSubmit`, no matcher. A Stop hook cannot tell Claude anything
+without telling you too: Claude Code prints a Stop hook's `additionalContext`
+as "Stop hook feedback: …" and a block reason as "Stop hook error: …", in
+full. So the two Stop hooks above print only their one-line `systemMessage`
+and write their guidance to
+`~/.claude/claude-guard-hooks/pending/<session_id>.<hook>.txt`. This hook
+hands it to Claude as `additionalContext` when you send your next message in
+that session, which Claude Code does not display, and deletes it. Files left by
+a session you never returned to are deleted after a day.
+
+The cost: the reply that set a Stop hook off stands as written, and Claude
+acts on the guidance in its next reply.
 
 ## Install
 
