@@ -21,7 +21,7 @@ no(){ printf '  FAIL  %s\n    %s\n' "$1" "$2"; fail=$((fail+1)); }
 # registered commands, but these commands are paths to the hook scripts and
 # never contain it, so that check passes whatever uninstall leaves behind. This
 # one looks for the scripts.
-jq -e '[.. | .command? // empty] | any(test("check-discuss-batch\\.sh|gate-unsandboxed-bash\\.sh|redirect-blocked-write\\.sh|check-write-handoff\\.sh|guard-generated-files\\.sh|guard-secret-files\\.sh|check-bare-references\\.sh"))' \
+jq -e '[.. | .command? // empty] | any(test("check-discuss-batch\\.sh|gate-unsandboxed-bash\\.sh|redirect-blocked-write\\.sh|check-write-handoff\\.sh|guard-generated-files\\.sh|guard-secret-files\\.sh|check-bare-references\\.sh|check-read-in-context\\.sh"))' \
   "$CLAUDE_DIR/settings.json" >/dev/null 2>&1 \
   && no "uninstall removes the hook scripts' entries" "still registered" \
   || ok "uninstall removes the hook scripts' entries"
@@ -279,6 +279,33 @@ done
 call check-bare-references.sh "$(st "F6 is open." true)"
 quiet && ok "stop_hook_active is left alone" || no "stop_hook_active is left alone" "rc=$rc"
 
+echo "check-read-in-context"
+pr(){ jq -nc --arg p "$1" '{hook_event_name:"UserPromptSubmit",session_id:"s1",prompt:$p}'; }
+# Messages behind real misreadings, from one word to the 35-word one of 2 Nov 2026.
+for m in "What remains?" "DO it." "3,2" \
+         "For each of these unapproved decisions, I need you to tell me _why_ you haven't built it as decided. This information as you have presented it is as good as useless in its current form." \
+         "/tmp/x.log is empty" \
+         "line one
+/not-a-command on line two"; do
+  call check-read-in-context.sh "$(pr "$m")"
+  [ "$rc" = 0 ] && jq -e '.hookSpecificOutput.hookEventName == "UserPromptSubmit" and (.hookSpecificOutput.additionalContext | contains("work in progress") or contains("in the middle of")) and (has("systemMessage") | not) and (has("decision") | not)' "$TMP/out" >/dev/null 2>&1 \
+    && ok "adds context: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-40)" || no "adds context: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-40)" "rc=$rc $(cat "$TMP/out")"
+done
+for m in "/gsd:quick fix it" "/color yellow" "/clear" "  /compact"; do
+  call check-read-in-context.sh "$(pr "$m")"
+  quiet && ok "skips the slash command: $m" || no "skips the slash command: $m" "rc=$rc $(cat "$TMP/out")"
+done
+for m in "<task-notification>
+<summary>x</summary>
+</task-notification>" "<agent-message from=\"a\">done</agent-message>"; do
+  call check-read-in-context.sh "$(pr "$m")"
+  quiet && ok "skips what nobody typed: $(printf '%s' "$m" | head -n 1 | cut -c1-30)" || no "skips what nobody typed: $(printf '%s' "$m" | head -n 1 | cut -c1-30)" "rc=$rc $(cat "$TMP/out")"
+done
+call check-read-in-context.sh "$(pr "<b> is the wrong tag")"
+[ -s "$TMP/out" ] && ok "a message starting with another tag still gets the context" || no "a message starting with another tag still gets the context" "no output"
+call check-read-in-context.sh '{"hook_event_name":"UserPromptSubmit","prompt":""}'
+quiet && ok "an empty prompt adds nothing" || no "an empty prompt adds nothing" "rc=$rc"
+
 echo "installer — upgrading from the withdrawn 1.3.1 build"
 mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/claude-guard-hooks/pending"
 touch "$CLAUDE_DIR/hooks/deliver-stop-guidance.sh" "$CLAUDE_DIR/claude-guard-hooks/pending/s1.check-bare-references.txt"
@@ -287,7 +314,7 @@ cat > "$CLAUDE_DIR/settings.json" <<'JSON'
   {"hooks":[{"type":"command","command":"someone-elses-prompt-hook"}]}]}}
 JSON
 "$REPO/install.sh" --link --yes >/dev/null 2>&1
-jq -e '[.hooks.UserPromptSubmit[].hooks[].command] == ["someone-elses-prompt-hook"]' "$CLAUDE_DIR/settings.json" >/dev/null 2>&1 \
+jq -e '[.hooks.UserPromptSubmit[].hooks[].command] == ["someone-elses-prompt-hook", "bash ~/.claude/hooks/check-read-in-context.sh"]' "$CLAUDE_DIR/settings.json" >/dev/null 2>&1 \
   && ok "drops the old prompt hook and keeps the others" || no "drops the old prompt hook and keeps the others" "$(jq -c .hooks.UserPromptSubmit "$CLAUDE_DIR/settings.json")"
 [ ! -e "$CLAUDE_DIR/hooks/deliver-stop-guidance.sh" ] && [ ! -e "$CLAUDE_DIR/claude-guard-hooks/pending" ] \
   && ok "deletes the old prompt hook script and its queue" || no "deletes the old prompt hook script and its queue" "still there"
@@ -305,6 +332,7 @@ count(){ jq "[.hooks[$1][]?.hooks[]] | length" "$CLAUDE_DIR/settings.json"; }
   || no "adds its four PreToolUse hooks without dropping the existing one" "got $(count '"PreToolUse"')"
 [ "$(count '"UserPromptExpansion"')" = 1 ] && ok "registers the typed-command hook" \
   || no "registers the typed-command hook" "got $(count '"UserPromptExpansion"')"
+[ "$(count '"UserPromptSubmit"')" = 1 ] && ok "registers the prompt hook" || no "registers the prompt hook" "got $(count '"UserPromptSubmit"')"
 [ "$(count '"Stop"')" = 2 ] && ok "registers the two Stop hooks" || no "registers the two Stop hooks" "got $(count '"Stop"')"
 jq -e '[.hooks.Stop[].hooks[]] | length == 2 and all(.asyncRewake == true and (.rewakeSummary | length) > 0)' \
   "$CLAUDE_DIR/settings.json" >/dev/null \
@@ -320,7 +348,7 @@ jq -e '[.hooks.PreToolUse[].hooks[].command] | any(contains("check-branch-naming
   && ok "claude-branch-guard's hook survives" || no "claude-branch-guard's hook survives" "it was removed"
 
 "$REPO/install.sh" --link --yes >/dev/null 2>&1
-[ "$(count '"PreToolUse"')" = 5 ] && [ "$(count '"UserPromptExpansion"')" = 1 ] \
+[ "$(count '"PreToolUse"')" = 5 ] && [ "$(count '"UserPromptExpansion"')" = 1 ] && [ "$(count '"UserPromptSubmit"')" = 1 ] \
   && ok "reinstalling does not duplicate" \
   || no "reinstalling does not duplicate" "got $(count '"PreToolUse"') and $(count '"UserPromptExpansion"')"
 
@@ -328,7 +356,7 @@ jq -e '[.hooks.PreToolUse[].hooks[].command] | any(contains("check-branch-naming
 [ "$(count '"PreToolUse"')" = 1 ] && ok "uninstall removes only its own" || no "uninstall removes only its own" "got $(count '"PreToolUse"')"
 jq -e '.hooks | has("UserPromptExpansion") | not' "$CLAUDE_DIR/settings.json" >/dev/null \
   && ok "uninstall drops the emptied event" || no "uninstall drops the emptied event" "the key is still there"
-jq -e '.hooks | (has("PostToolUse") or has("PostToolUseFailure") or has("Stop")) | not' "$CLAUDE_DIR/settings.json" >/dev/null \
+jq -e '.hooks | (has("PostToolUse") or has("PostToolUseFailure") or has("Stop") or has("UserPromptSubmit")) | not' "$CLAUDE_DIR/settings.json" >/dev/null \
   && ok "uninstall drops the new events too" || no "uninstall drops the new events too" "$(jq -c .hooks "$CLAUDE_DIR/settings.json")"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

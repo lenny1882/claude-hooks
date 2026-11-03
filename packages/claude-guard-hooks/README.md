@@ -167,6 +167,22 @@ keys are not checked. Claude is woken straight away to say what each id is.
 Answer codes only count in a sentence about answers or options, or with a
 second code beside them, so "a 3d model" is left alone.
 
+## check-read-in-context.sh
+
+`UserPromptSubmit`, no matcher. Adds an instruction to Claude's context with each
+message: work out what the conversation is in the middle of, read the message
+as a change to that work rather than a new task, keep the current mode and scope
+unless the message says to leave them, and ask in one line if two readings lead
+to different replies. It is about 100 words, and it never blocks a message.
+
+It runs on every message because length doesn't predict a misreading: the
+35-word message of 2 Nov 2026 that prompted it would pass a 30-word limit
+unchecked. Slash commands are skipped, and so are task notifications and
+messages from other agents, which also reach this event.
+
+Claude Code's hooks docs say `additionalContext` here produces no visible
+transcript entry. They don't say whether ctrl+o shows it.
+
 ## What you see from the Stop hooks
 
 Claude Code prints a Stop hook's block reason ("Stop hook error: …") and its

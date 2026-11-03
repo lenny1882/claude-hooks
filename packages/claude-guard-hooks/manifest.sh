@@ -22,6 +22,7 @@ FILES=(
   "hooks/guard-generated-files.sh:$CLAUDE_DIR/hooks/guard-generated-files.sh"
   "hooks/guard-secret-files.sh:$CLAUDE_DIR/hooks/guard-secret-files.sh"
   "hooks/check-bare-references.sh:$CLAUDE_DIR/hooks/check-bare-references.sh"
+  "hooks/check-read-in-context.sh:$CLAUDE_DIR/hooks/check-read-in-context.sh"
 )
 
 # Other directories uninstall.sh removes. Not for state: uninstall.sh already
@@ -60,6 +61,9 @@ settings_merge() {
                                     | map(select((.hooks | length) > 0)))
         | if .hooks.UserPromptSubmit == [] then del(.hooks.UserPromptSubmit) else . end
       else . end
+    | .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) + [
+        { hooks: [entry("check-read-in-context.sh")] }
+      ])
     | .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [
         { matcher: "Skill", hooks: [entry("check-discuss-batch.sh")] },
         { matcher: "Bash",  hooks: [entry("gate-unsandboxed-bash.sh")] },
@@ -92,6 +96,7 @@ REGISTRATIONS=(
   "PreToolUse (matcher: Edit|Write|MultiEdit|NotebookEdit|Bash) -> guard-generated-files.sh"
   "PreToolUse (matcher: Read|Bash) -> guard-secret-files.sh"
   "Stop (no matcher, asyncRewake) -> check-bare-references.sh"
+  "UserPromptSubmit (no matcher) -> check-read-in-context.sh"
 )
 
 # Feed each hook a call it must refuse and confirm it does. The PreToolUse ones
@@ -118,4 +123,7 @@ verify_probe() {
   printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 || return 1
   printf '%s' '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"F6 is still open."}' \
     | bash "$CLAUDE_DIR/hooks/check-bare-references.sh" >/dev/null 2>&1; [ $? = 2 ] || return 1
+  printf '%s' '{"hook_event_name":"UserPromptSubmit","prompt":"What remains?"}' \
+    | bash "$CLAUDE_DIR/hooks/check-read-in-context.sh" 2>/dev/null \
+    | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 || return 1
 }
