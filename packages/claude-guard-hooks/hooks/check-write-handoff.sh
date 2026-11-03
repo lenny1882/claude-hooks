@@ -18,10 +18,15 @@
 # What it looks for. Either of:
 #  - a first-person claim that something cannot be written ("I can't write",
 #    "is read-only from this session", "the sandbox won't let me write");
-#  - a `!` line whose command only puts content in a file: cp, tee, touch,
-#    echo/printf/cat redirected into a file, git remote add/set-url, git config.
-#    A redirect on any other command is taken as capturing its log — `rm -v …
-#    > /tmp/x.log` deletes files, which Write and Edit cannot do.
+#  - a `!` line whose command only puts content in a file: cp, touch, install,
+#    echo/printf/cat redirected into a file, literal content fed to tee (echo or
+#    printf piped straight into it, or a heredoc), git remote add/set-url,
+#    git config. A redirect on any other command is taken as capturing its log —
+#    `rm -v … > /tmp/x.log` deletes files, which Write and Edit cannot do.
+#    `make | tee log` is the same: Write cannot produce that output without
+#    running the command. `| sudo tee` is left alone; Write has no sudo.
+# A `!` line with docker exec, kubectl exec or ssh is skipped whole: what it
+# writes lands on another machine, which Write and Edit cannot reach.
 # The command names count only as commands — a space or separator before, a
 # space after — so `./install.sh` or `scripts/cp-assets.sh` is not a write.
 # A `! git push` or `! rm` hand-off is not matched; those have no Write or Edit
@@ -57,8 +62,10 @@ fi
 claim=$(printf '%s' "$msg" | grep -m1 -i -o -E \
   "\b(I|we) (can'?t|cannot|could ?n.?t|am unable to|was unable to) (write|save|create|update|edit|touch|overwrite)[^.]{0,60}|\b(is|are) read-only (from|in|for|inside) (this|the) (session|sandbox|shell)|sandbox (can'?t|cannot|won'?t let me|doesn'?t let me) (write|save)[^.]{0,60}")
 
-handoff=$(printf '%s' "$msg" | grep -m1 -o -E \
-  "^[[:space:]]*!.*(^|[[:space:];&|(])(cp|tee|touch|install)[[:space:]][^|]*$|^[[:space:]]*!.*\b(echo|printf|cat)\b[^|;&]*[^2&]>>? *[~/.\$\"'][^ ]*|^[[:space:]]*!.*\bgit( -C [^ ]+)? (remote (add|set-url)|config)\b.*" \
+handoff=$(printf '%s' "$msg" \
+  | grep -v -E "^[[:space:]]*!.*(^|[[:space:];&|(])(docker exec|kubectl exec|ssh)[[:space:]]" \
+  | grep -m1 -o -E \
+  "^[[:space:]]*!.*(^|[[:space:];&|(])(cp|touch|install)[[:space:]][^|]*$|^[[:space:]]*!.*\b(echo|printf|cat)\b[^|;&]*[^2&]>>? *[~/.\$\"'][^ ]*|^[[:space:]]*!.*\b(echo|printf)\b[^|;&]*\|[[:space:]]*tee[[:space:]].*|^[[:space:]]*!.*\bcat[[:space:]]*<<[^|]*\|[[:space:]]*tee[[:space:]].*|^[[:space:]]*!.*(^|[[:space:];&(])tee[[:space:]][^|]*<<.*|^[[:space:]]*!.*\bgit( -C [^ ]+)? (remote (add|set-url)|config)\b.*" \
   | cut -c1-160)
 
 [ -n "$claim$handoff" ] || exit 0

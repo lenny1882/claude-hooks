@@ -109,11 +109,14 @@ prose, does not set it off. `Permission denied (publickey)` and git's
 the reply and catches it if it claims, in the first person, that something
 cannot be written ("I couldn't save it", "is read-only from this session",
 "the sandbox won't let me write"), or hands you a `!` command that only writes
-a file — `cp`, `tee`, `touch`, a `>` redirect, `git remote add`, `git config`.
-Claude is woken straight away to do the write with Write or Edit.
+a file — `cp`, `touch`, a `>` redirect, `echo` or `printf` piped straight into
+`tee`, a heredoc fed to `tee`, `git remote add`, `git config`. Claude is woken
+straight away to do the write with Write or Edit.
 
 `! git push`, `! rm` and a build are allowed; they have no Write or Edit
-equivalent. It reads `last_assistant_message`, and falls back to the
+equivalent. So are `make | tee log`, which saves a command's output, and
+`| sudo tee`. A `!` line with `docker exec`, `kubectl exec` or `ssh` is skipped,
+because its writes land on another machine. It reads `last_assistant_message`, and falls back to the
 transcript's tail on a Claude Code too old to send it. It skips the
 follow-up turn it caused (`stop_hook_active`), so it cannot loop.
 

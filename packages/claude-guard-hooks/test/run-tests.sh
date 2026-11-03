@@ -144,7 +144,12 @@ for m in "The updated MIGRATION.md is ready, but I couldn't save it over the ori
          "Run:
 ! echo '- [x](x.md)' >> ~/.claude/projects/p/memory/MEMORY.md" \
          "! cd /r && cp /tmp/a.md docs/a.md" \
-         "! install -m 644 /tmp/a.conf ~/.config/a.conf"; do
+         "! install -m 644 /tmp/a.conf ~/.config/a.conf" \
+         "! echo x | tee ~/.claude/foo" \
+         "! printf 'a\\n' | tee -a ~/.claude/foo" \
+         "! cat <<'EOF' | tee ~/.claude/foo" \
+         "! tee ~/.claude/foo <<'EOF'" \
+         "! tee ~/.claude/foo <<< \"x\""; do
   call check-write-handoff.sh "$(st "$m")"
   stopped && ok "flags: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "flags: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc"
 done
@@ -161,6 +166,15 @@ for m in "\`MIGRATION.md\` is updated. Bash's \`cp\` got \"Read-only file system
          "Bash's sandbox blocks writes to ~/.claude/hooks:
 ! cd /opt/tools && curl -fsSL https://x/p.tar.gz | tar -xz && cd p && ./install.sh --yes" \
          "! bash scripts/cp-assets.sh && make" \
+         "! echo x | sudo tee /etc/foo" \
+         "! make 2>&1 | tee /tmp/make.log" \
+         "! cat /var/log/syslog | tee /tmp/copy.log" \
+         "! docker exec -u dev setuptest bash -c 'mkdir -p ~/.cache && echo https://x > ~/.cache/test-url' && scripts/test.sh reboot" \
+         "! docker exec -u dev setuptest bash -c 'ls -lt; echo; grep -l x *.jsonl; echo; tmux display' 2>&1 | tee /tmp/diag.log" \
+         "! docker exec adtest-ws bash -c 'cat /etc/resolv.conf; timeout 15 getent hosts x' 2>&1 | tee /tmp/diag.log; cd /r && scripts/t.sh reboot" \
+         "! docker exec box bash -c 'echo x' | tee /tmp/box.log" \
+         "! kubectl exec pod -- sh -c 'echo x > /tmp/y'" \
+         "! ssh box 'echo x > ~/y'" \
          "The hook blocks replies that say \"can't write\" next to a \`! cp\`."; do
   call check-write-handoff.sh "$(st "$m")"
   quiet && ok "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" || no "allows: $(printf '%s' "$m" | tr '\n' ' ' | cut -c1-48)" "rc=$rc $(cat "$TMP/out")"
